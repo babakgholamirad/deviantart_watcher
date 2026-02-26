@@ -1,4 +1,4 @@
-# DeviantArt New Upload Downloader
+﻿# DeviantArt New Upload Downloader
 
 This app checks one or more DeviantArt users' galleries and downloads newly detected images.
 It uses DeviantArt's official OAuth2 API instead of HTML scraping.
@@ -10,10 +10,13 @@ It uses DeviantArt's official OAuth2 API instead of HTML scraping.
 - Tracks seen deviation IDs per user in a local `state.json`
 - Downloads only items not seen before
 - Optionally saves preview/content images if original download is unavailable
+- Includes a local web page (`index.html`) with a gallery and a download form
 
 ## Project structure
 
 - `deviantart_watcher.py`: thin CLI entrypoint
+- `web_app.py`: local Flask server for the landing page and gallery API
+- `index.html`: landing page with form, loading animation, and gallery UI
 - `da_watcher/config.py`: argument parsing and env/config validation
 - `da_watcher/api.py`: DeviantArt OAuth + API client
 - `da_watcher/storage.py`: output filename/state management helpers
@@ -48,7 +51,7 @@ Edit `.env` and set:
 
 `DA_USERNAME` is still supported for single-user mode.
 
-## 4) Run
+## 4) Run CLI
 
 Run once:
 
@@ -69,30 +72,29 @@ python .\deviantart_watcher.py --usernames "artistA,artistB"
 python .\deviantart_watcher.py --username artistA --username artistB
 ```
 
-Seed state only (mark current posts as seen, download nothing):
+## 5) Run Web UI
+
+Start local server:
 
 ```powershell
-python .\deviantart_watcher.py --seed-only
+python .\web_app.py
 ```
 
-Enable preview fallback for non-downloadable deviations:
+Open in browser:
 
-```powershell
-python .\deviantart_watcher.py --allow-preview
-```
+- `http://127.0.0.1:5000`
 
-## Common options
+The landing page lets you:
 
-- `--pages 3` number of gallery pages checked each cycle
-- `--limit 24` items per page (max 24)
-- `--output-dir downloads`
-- `--state-file state.json`
-- `--include-mature`
-- `--verbose`
+- Fill `DA_CLIENT_ID`, `DA_CLIENT_SECRET`, and `DA_USERNAMES`
+- Click **Start Download** to run a one-time download job
+- See loading animation while the job is running
+- View downloaded images from `downloads/`
+- See `there is no pictures` when gallery is empty
 
 ## Notes
 
 - Downloading requires respecting each artist's permissions and DeviantArt terms.
-- If an item is not marked downloadable, it is skipped unless `--allow-preview` is enabled.
+- If an item is not marked downloadable, it is skipped unless `ALLOW_PREVIEW=true` is set.
 - Use Windows Task Scheduler if you prefer scheduled runs over `--interval`.
 

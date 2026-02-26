@@ -1,0 +1,370 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeviantArt Watcher</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --text: #1a1f2b;
+      --muted: #5f697a;
+      --accent: #0b6bd6;
+      --border: #d9e0ec;
+      --danger: #b42318;
+      --ok: #157347;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Segoe UI, Tahoma, sans-serif;
+      background: linear-gradient(180deg, #edf2fa 0%, var(--bg) 220px);
+      color: var(--text);
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0.2px;
+    }
+
+    .subtitle {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 8px 24px rgba(16, 24, 40, 0.06);
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .full-width {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--text);
+    }
+
+    textarea {
+      min-height: 72px;
+      resize: vertical;
+    }
+
+    .actions {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      padding: 10px 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.7;
+      cursor: wait;
+    }
+
+    .status {
+      font-size: 13px;
+      color: var(--muted);
+      min-height: 20px;
+    }
+
+    .status.error { color: var(--danger); }
+    .status.success { color: var(--ok); }
+
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 3px solid #dce6f7;
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      display: none;
+    }
+
+    .spinner.show { display: inline-block; }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .gallery-header {
+      margin: 20px 0 8px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .gallery-count {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .empty {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      padding: 10px 0;
+    }
+
+    .gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 6px 16px rgba(16, 24, 40, 0.05);
+    }
+
+    .card img {
+      width: 100%;
+      height: 190px;
+      object-fit: cover;
+      display: block;
+      background: #f0f2f7;
+    }
+
+    .card-meta {
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    @media (max-width: 760px) {
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>DeviantArt Image Downloader</h1>
+    <p class="subtitle">Run a download cycle and view images from your local <code>downloads</code> folder.</p>
+
+    <section class="panel">
+      <form id="downloadForm" autocomplete="off">
+        <div class="form-grid">
+          <div>
+            <label for="clientId">DA_CLIENT_ID</label>
+            <input id="clientId" name="clientId" type="text" required>
+          </div>
+          <div>
+            <label for="clientSecret">DA_CLIENT_SECRET</label>
+            <input id="clientSecret" name="clientSecret" type="password" required>
+          </div>
+          <div class="full-width">
+            <label for="usernames">DA_USERNAMES (comma separated)</label>
+            <textarea id="usernames" name="usernames" placeholder="artistA, artistB, artistC" required></textarea>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="startButton" type="submit">Start Download</button>
+          <span id="loadingSpinner" class="spinner" aria-hidden="true"></span>
+          <div id="statusText" class="status"></div>
+        </div>
+      </form>
+    </section>
+
+    <div class="gallery-header">
+      <h2>Gallery</h2>
+      <span id="galleryCount" class="gallery-count">0 image(s)</span>
+    </div>
+
+    <p id="emptyText" class="empty">there is no pictures</p>
+    <section id="galleryGrid" class="gallery-grid" aria-live="polite"></section>
+  </div>
+
+  <script>
+    const form = document.getElementById("downloadForm");
+    const startButton = document.getElementById("startButton");
+    const spinner = document.getElementById("loadingSpinner");
+    const statusText = document.getElementById("statusText");
+    const galleryGrid = document.getElementById("galleryGrid");
+    const emptyText = document.getElementById("emptyText");
+    const galleryCount = document.getElementById("galleryCount");
+
+    const clientIdInput = document.getElementById("clientId");
+    const clientSecretInput = document.getElementById("clientSecret");
+    const usernamesInput = document.getElementById("usernames");
+
+    function setLoading(isLoading) {
+      startButton.disabled = isLoading;
+      spinner.classList.toggle("show", isLoading);
+    }
+
+    function setStatus(message, type = "") {
+      statusText.textContent = message;
+      statusText.classList.remove("error", "success");
+      if (type) {
+        statusText.classList.add(type);
+      }
+    }
+
+    function renderGallery(images) {
+      galleryGrid.innerHTML = "";
+      galleryCount.textContent = `${images.length} image(s)`;
+
+      if (!images.length) {
+        emptyText.style.display = "block";
+        return;
+      }
+
+      emptyText.style.display = "none";
+
+      images.forEach((image) => {
+        const card = document.createElement("article");
+        card.className = "card";
+
+        const img = document.createElement("img");
+        img.src = `${image.url}?v=${encodeURIComponent(image.mtime)}`;
+        img.alt = image.name;
+        img.loading = "lazy";
+
+        const meta = document.createElement("div");
+        meta.className = "card-meta";
+        meta.textContent = image.relative_path;
+
+        card.appendChild(img);
+        card.appendChild(meta);
+        galleryGrid.appendChild(card);
+      });
+    }
+
+    async function loadDefaults() {
+      const response = await fetch("/api/defaults", { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json();
+      clientIdInput.value = data.client_id || "";
+      clientSecretInput.value = data.client_secret || "";
+      usernamesInput.value = data.usernames || "";
+    }
+
+    async function loadGallery() {
+      const response = await fetch("/api/gallery", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("Failed to load gallery.");
+      }
+      const data = await response.json();
+      renderGallery(data.images || []);
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const client_id = clientIdInput.value.trim();
+      const client_secret = clientSecretInput.value.trim();
+      const usernames = usernamesInput.value.trim();
+
+      if (!client_id || !client_secret || !usernames) {
+        setStatus("Please fill all fields before starting.", "error");
+        return;
+      }
+
+      setLoading(true);
+      setStatus("Downloading...", "");
+
+      try {
+        const response = await fetch("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_id, client_secret, usernames })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+          const message = data.message || (data.errors && data.errors[0]) || "Download job failed.";
+          setStatus(message, "error");
+        } else {
+          const stats = data.stats || {};
+          setStatus(
+            `Completed. downloaded=${stats.downloaded ?? 0}, new=${stats.new_items ?? 0}, skipped=${stats.skipped ?? 0}`,
+            "success"
+          );
+        }
+
+        await loadGallery();
+      } catch (error) {
+        setStatus(error.message || "Unexpected error.", "error");
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    async function initializePage() {
+      try {
+        await loadDefaults();
+      } catch (_error) {
+        // If defaults fail, user can still type credentials manually.
+      }
+
+      try {
+        await loadGallery();
+      } catch (error) {
+        setStatus(error.message || "Failed to load gallery.", "error");
+      }
+    }
+
+    initializePage();
+  </script>
+</body>
+</html>
