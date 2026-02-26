@@ -87,9 +87,11 @@ Open in browser:
 The landing page lets you:
 
 - Fill `DA_CLIENT_ID`, `DA_CLIENT_SECRET`, and `DA_USERNAMES`
+- Toggle optional flags with checkboxes (`INCLUDE_MATURE`, `ALLOW_PREVIEW`, `SEED_ONLY`, `VERBOSE`)
 - Click **Start Download** to run a one-time download job
 - See loading animation while the job is running
-- View downloaded images from `downloads/`
+- View images grouped by artist folder (collapsible sections)
+- Click any image to expand it in a full-screen viewer
 - See `there is no pictures` when gallery is empty
 
 ## Notes
@@ -97,4 +99,5 @@ The landing page lets you:
 - Downloading requires respecting each artist's permissions and DeviantArt terms.
 - If an item is not marked downloadable, it is skipped unless `ALLOW_PREVIEW=true` is set.
 - Use Windows Task Scheduler if you prefer scheduled runs over `--interval`.
+
 

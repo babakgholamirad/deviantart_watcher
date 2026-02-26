@@ -26,7 +26,7 @@
     }
 
     .container {
-      max-width: 1100px;
+      max-width: 1120px;
       margin: 0 auto;
       padding: 24px 16px 40px;
     }
@@ -69,7 +69,8 @@
       font-weight: 600;
     }
 
-    input, textarea {
+    input,
+    textarea {
       width: 100%;
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -82,6 +83,32 @@
     textarea {
       min-height: 72px;
       resize: vertical;
+    }
+
+    .flag-grid {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .flag-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fafcff;
+      color: var(--text);
+      font-size: 13px;
+      user-select: none;
+    }
+
+    .flag-item input {
+      width: auto;
+      margin: 0;
+      accent-color: var(--accent);
     }
 
     .actions {
@@ -152,11 +179,48 @@
       padding: 10px 0;
     }
 
-    .gallery-grid {
+    .artist-groups {
+      display: grid;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .artist-group {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #fff;
+      overflow: hidden;
+      box-shadow: 0 6px 16px rgba(16, 24, 40, 0.05);
+    }
+
+    .artist-group summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      border-bottom: 1px solid #eef2f8;
+      background: #f8fbff;
+    }
+
+    .artist-group summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .artist-count {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .artist-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
       gap: 12px;
-      margin-top: 10px;
+      padding: 12px;
     }
 
     .card {
@@ -165,6 +229,7 @@
       border-radius: 10px;
       overflow: hidden;
       box-shadow: 0 6px 16px rgba(16, 24, 40, 0.05);
+      cursor: zoom-in;
     }
 
     .card img {
@@ -182,6 +247,58 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      background: rgba(12, 16, 23, 0.88);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 1000;
+    }
+
+    .lightbox.show {
+      display: flex;
+    }
+
+    .lightbox-content {
+      max-width: min(1100px, 100%);
+      max-height: 100%;
+      display: grid;
+      gap: 10px;
+      justify-items: center;
+    }
+
+    .lightbox-image {
+      max-width: 100%;
+      max-height: calc(100vh - 120px);
+      border-radius: 8px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    .lightbox-caption {
+      color: #e7ecf7;
+      font-size: 13px;
+      text-align: center;
+      word-break: break-word;
+    }
+
+    .lightbox-close {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
     }
 
     @media (max-width: 760px) {
@@ -211,6 +328,27 @@
             <label for="usernames">DA_USERNAMES (comma separated)</label>
             <textarea id="usernames" name="usernames" placeholder="artistA, artistB, artistC" required></textarea>
           </div>
+          <div class="full-width">
+            <label>Optional behavior flags</label>
+            <div class="flag-grid">
+              <label class="flag-item" for="includeMature">
+                <input id="includeMature" type="checkbox">
+                INCLUDE_MATURE
+              </label>
+              <label class="flag-item" for="allowPreview">
+                <input id="allowPreview" type="checkbox">
+                ALLOW_PREVIEW
+              </label>
+              <label class="flag-item" for="seedOnly">
+                <input id="seedOnly" type="checkbox">
+                SEED_ONLY
+              </label>
+              <label class="flag-item" for="verbose">
+                <input id="verbose" type="checkbox">
+                VERBOSE
+              </label>
+            </div>
+          </div>
         </div>
 
         <div class="actions">
@@ -227,7 +365,15 @@
     </div>
 
     <p id="emptyText" class="empty">there is no pictures</p>
-    <section id="galleryGrid" class="gallery-grid" aria-live="polite"></section>
+    <section id="artistGroups" class="artist-groups" aria-live="polite"></section>
+  </div>
+
+  <div id="lightbox" class="lightbox" aria-hidden="true">
+    <button id="lightboxClose" class="lightbox-close" type="button" aria-label="Close">&times;</button>
+    <div class="lightbox-content">
+      <img id="lightboxImage" class="lightbox-image" src="" alt="Expanded image">
+      <div id="lightboxCaption" class="lightbox-caption"></div>
+    </div>
   </div>
 
   <script>
@@ -235,13 +381,23 @@
     const startButton = document.getElementById("startButton");
     const spinner = document.getElementById("loadingSpinner");
     const statusText = document.getElementById("statusText");
-    const galleryGrid = document.getElementById("galleryGrid");
     const emptyText = document.getElementById("emptyText");
     const galleryCount = document.getElementById("galleryCount");
+    const artistGroups = document.getElementById("artistGroups");
 
     const clientIdInput = document.getElementById("clientId");
     const clientSecretInput = document.getElementById("clientSecret");
     const usernamesInput = document.getElementById("usernames");
+
+    const includeMatureInput = document.getElementById("includeMature");
+    const allowPreviewInput = document.getElementById("allowPreview");
+    const seedOnlyInput = document.getElementById("seedOnly");
+    const verboseInput = document.getElementById("verbose");
+
+    const lightbox = document.getElementById("lightbox");
+    const lightboxImage = document.getElementById("lightboxImage");
+    const lightboxCaption = document.getElementById("lightboxCaption");
+    const lightboxClose = document.getElementById("lightboxClose");
 
     function setLoading(isLoading) {
       startButton.disabled = isLoading;
@@ -256,33 +412,68 @@
       }
     }
 
-    function renderGallery(images) {
-      galleryGrid.innerHTML = "";
-      galleryCount.textContent = `${images.length} image(s)`;
+    function openLightbox(url, caption) {
+      lightboxImage.src = url;
+      lightboxCaption.textContent = caption;
+      lightbox.classList.add("show");
+      lightbox.setAttribute("aria-hidden", "false");
+    }
 
-      if (!images.length) {
+    function closeLightbox() {
+      lightbox.classList.remove("show");
+      lightbox.setAttribute("aria-hidden", "true");
+      lightboxImage.src = "";
+      lightboxCaption.textContent = "";
+    }
+
+    function renderGallery(groups, totalCount) {
+      artistGroups.innerHTML = "";
+      galleryCount.textContent = `${totalCount} image(s)`;
+
+      if (!totalCount) {
         emptyText.style.display = "block";
         return;
       }
 
       emptyText.style.display = "none";
 
-      images.forEach((image) => {
-        const card = document.createElement("article");
-        card.className = "card";
+      groups.forEach((group) => {
+        const details = document.createElement("details");
+        details.className = "artist-group";
+        details.open = true;
 
-        const img = document.createElement("img");
-        img.src = `${image.url}?v=${encodeURIComponent(image.mtime)}`;
-        img.alt = image.name;
-        img.loading = "lazy";
+        const summary = document.createElement("summary");
+        summary.innerHTML = `<span>${group.artist}</span><span class="artist-count">${group.count} image(s)</span>`;
 
-        const meta = document.createElement("div");
-        meta.className = "card-meta";
-        meta.textContent = image.relative_path;
+        const grid = document.createElement("div");
+        grid.className = "artist-grid";
 
-        card.appendChild(img);
-        card.appendChild(meta);
-        galleryGrid.appendChild(card);
+        group.images.forEach((image) => {
+          const card = document.createElement("article");
+          card.className = "card";
+
+          const img = document.createElement("img");
+          const src = `${image.url}?v=${encodeURIComponent(image.mtime)}`;
+          img.src = src;
+          img.alt = image.name;
+          img.loading = "lazy";
+
+          const meta = document.createElement("div");
+          meta.className = "card-meta";
+          meta.textContent = image.relative_path;
+
+          card.addEventListener("click", () => {
+            openLightbox(src, image.relative_path);
+          });
+
+          card.appendChild(img);
+          card.appendChild(meta);
+          grid.appendChild(card);
+        });
+
+        details.appendChild(summary);
+        details.appendChild(grid);
+        artistGroups.appendChild(details);
       });
     }
 
@@ -296,6 +487,11 @@
       clientIdInput.value = data.client_id || "";
       clientSecretInput.value = data.client_secret || "";
       usernamesInput.value = data.usernames || "";
+
+      includeMatureInput.checked = Boolean(data.include_mature);
+      allowPreviewInput.checked = Boolean(data.allow_preview);
+      seedOnlyInput.checked = Boolean(data.seed_only);
+      verboseInput.checked = Boolean(data.verbose);
     }
 
     async function loadGallery() {
@@ -304,7 +500,7 @@
         throw new Error("Failed to load gallery.");
       }
       const data = await response.json();
-      renderGallery(data.images || []);
+      renderGallery(data.groups || [], data.count || 0);
     }
 
     form.addEventListener("submit", async (event) => {
@@ -326,7 +522,15 @@
         const response = await fetch("/api/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id, client_secret, usernames })
+          body: JSON.stringify({
+            client_id,
+            client_secret,
+            usernames,
+            include_mature: includeMatureInput.checked,
+            allow_preview: allowPreviewInput.checked,
+            seed_only: seedOnlyInput.checked,
+            verbose: verboseInput.checked
+          })
         });
 
         const data = await response.json();
@@ -347,6 +551,20 @@
         setStatus(error.message || "Unexpected error.", "error");
       } finally {
         setLoading(false);
+      }
+    });
+
+    lightboxClose.addEventListener("click", closeLightbox);
+
+    lightbox.addEventListener("click", (event) => {
+      if (event.target === lightbox) {
+        closeLightbox();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && lightbox.classList.contains("show")) {
+        closeLightbox();
       }
     });
 

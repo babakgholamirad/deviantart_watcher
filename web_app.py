@@ -49,12 +49,34 @@ def env_bool(name: str, default: bool) -> bool:
         return default
 
 
+def payload_bool(payload: Dict[str, Any], key: str, default: bool) -> bool:
+    value = payload.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        try:
+            return parse_bool(value)
+        except ValueError:
+            return default
+    return default
+
+
 def parse_usernames(raw: str) -> List[str]:
     normalized = raw.replace("\n", ",").replace("\r", ",")
     return parse_csv_values(normalized)
 
 
-def build_runtime_config(client_id: str, client_secret: str, usernames: List[str]) -> AppConfig:
+def build_runtime_config(
+    client_id: str,
+    client_secret: str,
+    usernames: List[str],
+    include_mature: bool,
+    allow_preview: bool,
+    seed_only: bool,
+    verbose: bool,
+) -> AppConfig:
     return AppConfig(
         client_id=client_id,
         client_secret=client_secret,
@@ -64,37 +86,50 @@ def build_runtime_config(client_id: str, client_secret: str, usernames: List[str
         pages=max(1, min(10, env_int("PAGES_PER_CHECK", 3))),
         limit=max(1, min(24, env_int("PAGE_SIZE", 24))),
         interval=0,
-        include_mature=env_bool("INCLUDE_MATURE", False),
-        allow_preview=env_bool("ALLOW_PREVIEW", False),
-        seed_only=False,
+        include_mature=include_mature,
+        allow_preview=allow_preview,
+        seed_only=seed_only,
         max_seen=max(100, env_int("MAX_SEEN_IDS", 5000)),
         timeout=max(5, env_int("REQUEST_TIMEOUT_SECONDS", 30)),
         user_agent=os.getenv("USER_AGENT", DEFAULT_USER_AGENT).strip() or DEFAULT_USER_AGENT,
-        verbose=env_bool("VERBOSE", False),
+        verbose=verbose,
     )
 
 
-def scan_images() -> List[Dict[str, Any]]:
+def scan_images() -> Dict[str, Any]:
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     images: List[Dict[str, Any]] = []
+    groups_map: Dict[str, List[Dict[str, Any]]] = {}
 
     for path in DOWNLOADS_DIR.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
             continue
+
         rel_path = path.relative_to(DOWNLOADS_DIR).as_posix()
+        rel_parts = rel_path.split("/")
+        artist = rel_parts[0] if len(rel_parts) > 1 else "ungrouped"
         stats = path.stat()
-        images.append(
-            {
-                "name": path.name,
-                "relative_path": rel_path,
-                "url": f"/downloads/{rel_path}",
-                "mtime": int(stats.st_mtime),
-                "size_bytes": stats.st_size,
-            }
-        )
+
+        image = {
+            "artist": artist,
+            "name": path.name,
+            "relative_path": rel_path,
+            "url": f"/downloads/{rel_path}",
+            "mtime": int(stats.st_mtime),
+            "size_bytes": stats.st_size,
+        }
+        images.append(image)
+        groups_map.setdefault(artist, []).append(image)
 
     images.sort(key=lambda item: item["mtime"], reverse=True)
-    return images
+
+    groups: List[Dict[str, Any]] = []
+    for artist in sorted(groups_map.keys(), key=str.lower):
+        group_images = groups_map[artist]
+        group_images.sort(key=lambda item: item["mtime"], reverse=True)
+        groups.append({"artist": artist, "count": len(group_images), "images": group_images})
+
+    return {"images": images, "groups": groups, "count": len(images), "group_count": len(groups)}
 
 
 def run_download_job(config: AppConfig) -> Dict[str, Any]:
@@ -148,14 +183,17 @@ def api_defaults() -> Any:
             "client_id": os.getenv("DA_CLIENT_ID", ""),
             "client_secret": os.getenv("DA_CLIENT_SECRET", ""),
             "usernames": os.getenv("DA_USERNAMES", os.getenv("DA_USERNAME", "")),
+            "include_mature": env_bool("INCLUDE_MATURE", False),
+            "allow_preview": env_bool("ALLOW_PREVIEW", False),
+            "seed_only": env_bool("SEED_ONLY", False),
+            "verbose": env_bool("VERBOSE", False),
         }
     )
 
 
 @app.get("/api/gallery")
 def api_gallery() -> Any:
-    images = scan_images()
-    return jsonify({"images": images, "count": len(images)})
+    return jsonify(scan_images())
 
 
 @app.post("/api/run")
@@ -177,17 +215,32 @@ def api_run() -> Any:
             400,
         )
 
+    include_mature = payload_bool(payload, "include_mature", env_bool("INCLUDE_MATURE", False))
+    allow_preview = payload_bool(payload, "allow_preview", env_bool("ALLOW_PREVIEW", False))
+    seed_only = payload_bool(payload, "seed_only", env_bool("SEED_ONLY", False))
+    verbose = payload_bool(payload, "verbose", env_bool("VERBOSE", False))
+
     if not run_lock.acquire(blocking=False):
         return jsonify({"ok": False, "message": "A download job is already running."}), 409
 
     try:
-        config = build_runtime_config(client_id, client_secret, usernames)
+        config = build_runtime_config(
+            client_id=client_id,
+            client_secret=client_secret,
+            usernames=usernames,
+            include_mature=include_mature,
+            allow_preview=allow_preview,
+            seed_only=seed_only,
+            verbose=verbose,
+        )
         result = run_download_job(config)
+        gallery = scan_images()
         response = {
             "ok": len(result["errors"]) == 0,
             "stats": result["stats"],
             "errors": result["errors"],
-            "gallery_count": len(scan_images()),
+            "gallery_count": gallery["count"],
+            "group_count": gallery["group_count"],
         }
         return jsonify(response), 200
     finally:
