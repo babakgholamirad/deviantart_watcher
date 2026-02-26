@@ -11,6 +11,14 @@ It uses DeviantArt's official OAuth2 API instead of HTML scraping.
 - Downloads only items not seen before
 - Optionally saves preview/content images if original download is unavailable
 
+## Project structure
+
+- `deviantart_watcher.py`: thin CLI entrypoint
+- `da_watcher/config.py`: argument parsing and env/config validation
+- `da_watcher/api.py`: DeviantArt OAuth + API client
+- `da_watcher/storage.py`: output filename/state management helpers
+- `da_watcher/watcher.py`: polling loop and per-user processing logic
+
 ## 1) Create DeviantArt API credentials
 
 1. Go to the DeviantArt developers portal: `https://www.deviantart.com/developers/`
@@ -21,7 +29,7 @@ It uses DeviantArt's official OAuth2 API instead of HTML scraping.
 ## 2) Install dependencies
 
 ```powershell
-cd C:\Users\HOME\Projects\auto_image_downloader
+cd C:\Users\HOME\Projects\deviantart_watcher
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
@@ -87,3 +95,4 @@ python .\deviantart_watcher.py --allow-preview
 - Downloading requires respecting each artist's permissions and DeviantArt terms.
 - If an item is not marked downloadable, it is skipped unless `--allow-preview` is enabled.
 - Use Windows Task Scheduler if you prefer scheduled runs over `--interval`.
+

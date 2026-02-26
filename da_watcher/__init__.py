@@ -1,0 +1,2 @@
+"""DeviantArt gallery watcher package."""
+
