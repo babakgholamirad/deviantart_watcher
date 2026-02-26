@@ -1,14 +1,37 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional, Set
 
 import requests
 
 from .api import DeviantArtApiError, DeviantArtClient
 from .config import AppConfig, parse_config
-from .storage import build_output_path, ensure_user_state, load_state, save_state
+from .storage import (
+    build_output_path,
+    ensure_user_state,
+    load_state,
+    sanitize_filename,
+    save_state,
+)
+
+
+def collect_local_deviation_ids(output_dir: Path, username: str) -> Set[str]:
+    user_dir = output_dir / sanitize_filename(username, fallback="user")
+    if not user_dir.exists() or not user_dir.is_dir():
+        return set()
+
+    ids: Set[str] = set()
+    for path in user_dir.iterdir():
+        if not path.is_file():
+            continue
+        separator_index = path.name.find("_")
+        if separator_index <= 0:
+            continue
+        ids.add(path.name[:separator_index])
+    return ids
 
 
 def process_user_once(
@@ -20,8 +43,66 @@ def process_user_once(
     user_state = ensure_user_state(state, username)
     seen_ids = user_state.get("seen_ids", [])
 
-    # Use a set for fast membership checks while keeping list order for persisted state.
+    seeded_ids = user_state.setdefault("seeded_ids", [])
+    if not isinstance(seeded_ids, list):
+        seeded_ids = []
+        user_state["seeded_ids"] = seeded_ids
+
     seen_set = set(seen_ids)
+    seeded_set = set(seeded_ids)
+    processed_this_run = set()
+    local_ids = collect_local_deviation_ids(config.output_dir, username)
+
+    def unmark_seen(deviation_id: str) -> None:
+        seen_set.discard(deviation_id)
+        seeded_set.discard(deviation_id)
+
+        while True:
+            try:
+                seen_ids.remove(deviation_id)
+            except ValueError:
+                break
+
+        while True:
+            try:
+                seeded_ids.remove(deviation_id)
+            except ValueError:
+                break
+
+    def mark_seen(deviation_id: str, seeded: bool) -> None:
+        if deviation_id not in seen_set:
+            seen_set.add(deviation_id)
+            seen_ids.append(deviation_id)
+
+        if seeded:
+            if deviation_id not in seeded_set:
+                seeded_set.add(deviation_id)
+                seeded_ids.append(deviation_id)
+        else:
+            if deviation_id in seeded_set:
+                seeded_set.discard(deviation_id)
+                while True:
+                    try:
+                        seeded_ids.remove(deviation_id)
+                    except ValueError:
+                        break
+
+    if not config.seed_only:
+        # Recover from legacy/bad state: if an ID is marked seen but the local file is missing,
+        # retry it unless it was intentionally added during seed-only mode.
+        stale_ids = [
+            deviation_id
+            for deviation_id in seen_set
+            if deviation_id not in seeded_set and deviation_id not in local_ids
+        ]
+        for deviation_id in stale_ids:
+            unmark_seen(deviation_id)
+        if stale_ids:
+            logging.info(
+                "Recovered %s stale seen IDs for @%s (missing local files).",
+                len(stale_ids),
+                username,
+            )
 
     offset = 0
     pages_checked = 0
@@ -47,15 +128,21 @@ def process_user_once(
                 continue
 
             deviation_id = str(item.get("deviationid", "")).strip()
-            if not deviation_id or deviation_id in seen_set:
+            if not deviation_id or deviation_id in processed_this_run:
                 continue
 
-            seen_set.add(deviation_id)
-            seen_ids.append(deviation_id)
+            if deviation_id in seen_set:
+                if deviation_id in seeded_set or deviation_id in local_ids:
+                    continue
+                # Seen entry without file and not seeded should be retried.
+                unmark_seen(deviation_id)
+
+            processed_this_run.add(deviation_id)
             new_items += 1
 
             title = str(item.get("title") or deviation_id)
             if config.seed_only:
+                mark_seen(deviation_id, seeded=True)
                 logging.info("SEED @%s %s | %s", username, deviation_id, title)
                 continue
 
@@ -80,7 +167,6 @@ def process_user_once(
                         exc,
                     )
 
-            # Fallback for posts where original download is disabled by the artist.
             if not download_url and config.allow_preview:
                 content = item.get("content")
                 if isinstance(content, dict):
@@ -112,6 +198,8 @@ def process_user_once(
                 logging.warning("Download failed for @%s %s | %s: %s", username, deviation_id, title, exc)
                 continue
 
+            mark_seen(deviation_id, seeded=False)
+            local_ids.add(deviation_id)
             if created:
                 downloaded += 1
                 logging.info("DOWNLOADED @%s %s | %s -> %s", username, deviation_id, title, output_path)
@@ -127,8 +215,15 @@ def process_user_once(
         offset = int(next_offset)
 
     if len(seen_ids) > config.max_seen:
-        # Trim old IDs to keep state file bounded over long-running usage.
         user_state["seen_ids"] = seen_ids[-config.max_seen :]
+    else:
+        user_state["seen_ids"] = seen_ids
+
+    allowed_seen = set(user_state["seen_ids"])
+    filtered_seeded = [deviation_id for deviation_id in seeded_ids if deviation_id in allowed_seen]
+    if len(filtered_seeded) > config.max_seen:
+        filtered_seeded = filtered_seeded[-config.max_seen :]
+    user_state["seeded_ids"] = filtered_seeded
 
     return {
         "pages_checked": pages_checked,
@@ -209,4 +304,3 @@ def run() -> int:
         if config.interval == 0:
             return 1 if had_errors else 0
         time.sleep(config.interval)
-
