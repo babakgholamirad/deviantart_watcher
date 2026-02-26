@@ -1,0 +1,6 @@
+.env
+downloads/
+state.json
+*.part
+__pycache__/
+.pytest_cache/
