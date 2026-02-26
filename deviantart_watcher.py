@@ -11,7 +11,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
 import requests
@@ -84,6 +84,41 @@ def env_int(name: str, default: int) -> int:
         return int(value)
     except ValueError as exc:
         raise SystemExit(f"Environment variable {name} must be an integer.") from exc
+
+
+def parse_csv_values(raw_value: str) -> List[str]:
+    return [part.strip() for part in raw_value.split(",") if part.strip()]
+
+
+def resolve_usernames(
+    cli_usernames: Optional[List[str]],
+    cli_usernames_csv: Optional[str],
+    env_usernames_csv: str,
+    env_username_single: str,
+) -> List[str]:
+    values: List[str] = []
+
+    if cli_usernames:
+        for item in cli_usernames:
+            values.extend(parse_csv_values(item))
+    if cli_usernames_csv:
+        values.extend(parse_csv_values(cli_usernames_csv))
+
+    if not values:
+        if env_usernames_csv.strip():
+            values.extend(parse_csv_values(env_usernames_csv))
+        elif env_username_single.strip():
+            values.extend(parse_csv_values(env_username_single))
+
+    deduped: List[str] = []
+    seen = set()
+    for username in values:
+        key = username.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(username)
+    return deduped
 
 
 def sanitize_filename(name: str, fallback: str = "deviation") -> str:
@@ -285,8 +320,13 @@ class DeviantArtClient:
             raise
 
 
-def process_once(args: argparse.Namespace, client: DeviantArtClient, state: Dict[str, Any]) -> Dict[str, int]:
-    user_state = ensure_user_state(state, args.username)
+def process_user_once(
+    args: argparse.Namespace,
+    client: DeviantArtClient,
+    state: Dict[str, Any],
+    username: str,
+) -> Dict[str, int]:
+    user_state = ensure_user_state(state, username)
     seen_ids = user_state.get("seen_ids", [])
     seen_set = set(seen_ids)
 
@@ -300,7 +340,7 @@ def process_once(args: argparse.Namespace, client: DeviantArtClient, state: Dict
     for _ in range(args.pages):
         pages_checked += 1
         page = client.fetch_gallery_page(
-            username=args.username,
+            username=username,
             offset=offset,
             limit=args.limit,
             include_mature=args.include_mature,
@@ -325,12 +365,12 @@ def process_once(args: argparse.Namespace, client: DeviantArtClient, state: Dict
 
             title = str(item.get("title") or deviation_id)
             if args.seed_only:
-                logging.info("SEED %s | %s", deviation_id, title)
+                logging.info("SEED @%s %s | %s", username, deviation_id, title)
                 continue
 
             if item.get("is_deleted"):
                 skipped += 1
-                logging.info("SKIP deleted %s | %s", deviation_id, title)
+                logging.info("SKIP deleted @%s %s | %s", username, deviation_id, title)
                 continue
 
             download_url = ""
@@ -342,7 +382,12 @@ def process_once(args: argparse.Namespace, client: DeviantArtClient, state: Dict
                     download_url = str(info.get("src") or "")
                     preferred_name = str(info.get("filename") or "") or None
                 except DeviantArtApiError as exc:
-                    logging.warning("Original download unavailable for %s: %s", deviation_id, exc)
+                    logging.warning(
+                        "Original download unavailable for @%s %s: %s",
+                        username,
+                        deviation_id,
+                        exc,
+                    )
 
             if not download_url and args.allow_preview:
                 content = item.get("content")
@@ -352,7 +397,8 @@ def process_once(args: argparse.Namespace, client: DeviantArtClient, state: Dict
             if not download_url:
                 skipped += 1
                 logging.info(
-                    "SKIP no downloadable image %s | %s (use --allow-preview to save preview/content images)",
+                    "SKIP no downloadable image @%s %s | %s (use --allow-preview to save preview/content images)",
+                    username,
                     deviation_id,
                     title,
                 )
@@ -360,7 +406,7 @@ def process_once(args: argparse.Namespace, client: DeviantArtClient, state: Dict
 
             output_path = build_output_path(
                 output_dir=args.output_dir,
-                username=args.username,
+                username=username,
                 deviation_id=deviation_id,
                 title=title,
                 source_url=download_url,
@@ -371,15 +417,15 @@ def process_once(args: argparse.Namespace, client: DeviantArtClient, state: Dict
                 created = client.download_file(download_url, output_path)
             except requests.RequestException as exc:
                 skipped += 1
-                logging.warning("Download failed for %s | %s: %s", deviation_id, title, exc)
+                logging.warning("Download failed for @%s %s | %s: %s", username, deviation_id, title, exc)
                 continue
 
             if created:
                 downloaded += 1
-                logging.info("DOWNLOADED %s | %s -> %s", deviation_id, title, output_path)
+                logging.info("DOWNLOADED @%s %s | %s -> %s", username, deviation_id, title, output_path)
             else:
                 existing += 1
-                logging.info("EXISTS %s | %s -> %s", deviation_id, title, output_path)
+                logging.info("EXISTS @%s %s | %s -> %s", username, deviation_id, title, output_path)
 
         if not page.get("has_more"):
             break
@@ -416,7 +462,17 @@ def parse_args() -> argparse.Namespace:
         default=os.getenv("DA_CLIENT_SECRET"),
         help="DeviantArt client_secret.",
     )
-    parser.add_argument("--username", default=os.getenv("DA_USERNAME"), help="Target DeviantArt username.")
+    parser.add_argument(
+        "--username",
+        action="append",
+        default=None,
+        help="Target DeviantArt username (repeat flag for multiple users).",
+    )
+    parser.add_argument(
+        "--usernames",
+        default=None,
+        help="Comma-separated DeviantArt usernames.",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -496,8 +552,14 @@ def parse_args() -> argparse.Namespace:
         missing.append("DA_CLIENT_ID / --client-id")
     if not args.client_secret:
         missing.append("DA_CLIENT_SECRET / --client-secret")
-    if not args.username:
-        missing.append("DA_USERNAME / --username")
+    args.usernames = resolve_usernames(
+        cli_usernames=args.username,
+        cli_usernames_csv=args.usernames,
+        env_usernames_csv=os.getenv("DA_USERNAMES", ""),
+        env_username_single=os.getenv("DA_USERNAME", ""),
+    )
+    if not args.usernames:
+        missing.append("DA_USERNAMES (or DA_USERNAME) / --username / --usernames")
     if missing:
         parser.error(f"Missing required values: {', '.join(missing)}")
 
@@ -530,29 +592,58 @@ def run() -> int:
 
     while True:
         started_at = time.strftime("%Y-%m-%d %H:%M:%S")
-        logging.info("Checking @%s at %s", args.username, started_at)
-        try:
-            stats = process_once(args, client, state)
-            save_state(args.state_file, state)
-            logging.info(
-                "Finished check | pages=%s new=%s downloaded=%s existing=%s skipped=%s",
-                stats["pages_checked"],
-                stats["new_items"],
-                stats["downloaded"],
-                stats["existing"],
-                stats["skipped"],
-            )
-        except DeviantArtApiError as exc:
-            logging.error("API error: %s", exc)
-            if args.interval == 0:
-                return 1
-        except requests.RequestException as exc:
-            logging.error("Network error: %s", exc)
-            if args.interval == 0:
-                return 1
+        targets = ", ".join(f"@{username}" for username in args.usernames)
+        logging.info("Checking %s at %s", targets, started_at)
+
+        cycle_stats = {
+            "users_checked": 0,
+            "pages_checked": 0,
+            "new_items": 0,
+            "downloaded": 0,
+            "existing": 0,
+            "skipped": 0,
+        }
+        had_errors = False
+
+        for username in args.usernames:
+            logging.info("Checking @%s", username)
+            try:
+                stats = process_user_once(args, client, state, username)
+                cycle_stats["users_checked"] += 1
+                cycle_stats["pages_checked"] += stats["pages_checked"]
+                cycle_stats["new_items"] += stats["new_items"]
+                cycle_stats["downloaded"] += stats["downloaded"]
+                cycle_stats["existing"] += stats["existing"]
+                cycle_stats["skipped"] += stats["skipped"]
+                logging.info(
+                    "Finished @%s | pages=%s new=%s downloaded=%s existing=%s skipped=%s",
+                    username,
+                    stats["pages_checked"],
+                    stats["new_items"],
+                    stats["downloaded"],
+                    stats["existing"],
+                    stats["skipped"],
+                )
+            except DeviantArtApiError as exc:
+                had_errors = True
+                logging.error("API error for @%s: %s", username, exc)
+            except requests.RequestException as exc:
+                had_errors = True
+                logging.error("Network error for @%s: %s", username, exc)
+
+        save_state(args.state_file, state)
+        logging.info(
+            "Finished cycle | users=%s pages=%s new=%s downloaded=%s existing=%s skipped=%s",
+            cycle_stats["users_checked"],
+            cycle_stats["pages_checked"],
+            cycle_stats["new_items"],
+            cycle_stats["downloaded"],
+            cycle_stats["existing"],
+            cycle_stats["skipped"],
+        )
 
         if args.interval == 0:
-            return 0
+            return 1 if had_errors else 0
 
         time.sleep(args.interval)
 

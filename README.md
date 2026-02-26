@@ -1,13 +1,13 @@
 # DeviantArt New Upload Downloader
 
-This app checks a DeviantArt user's gallery and downloads newly detected images.
+This app checks one or more DeviantArt users' galleries and downloads newly detected images.
 It uses DeviantArt's official OAuth2 API instead of HTML scraping.
 
 ## What it does
 
 - Authenticates with your DeviantArt `client_id` and `client_secret`
-- Polls a user's gallery (`/gallery/all`)
-- Tracks seen deviation IDs in a local `state.json`
+- Polls each configured user's gallery (`/gallery/all`)
+- Tracks seen deviation IDs per user in a local `state.json`
 - Downloads only items not seen before
 - Optionally saves preview/content images if original download is unavailable
 
@@ -36,7 +36,9 @@ Edit `.env` and set:
 
 - `DA_CLIENT_ID`
 - `DA_CLIENT_SECRET`
-- `DA_USERNAME`
+- `DA_USERNAMES` (comma-separated, example: `artistA,artistB,artistC`)
+
+`DA_USERNAME` is still supported for single-user mode.
 
 ## 4) Run
 
@@ -50,6 +52,13 @@ Watch continuously every 5 minutes:
 
 ```powershell
 python .\deviantart_watcher.py --interval 300
+```
+
+Override users from CLI:
+
+```powershell
+python .\deviantart_watcher.py --usernames "artistA,artistB"
+python .\deviantart_watcher.py --username artistA --username artistB
 ```
 
 Seed state only (mark current posts as seen, download nothing):
