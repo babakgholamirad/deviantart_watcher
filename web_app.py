@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import threading
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 from flask import Flask, jsonify, request, send_from_directory
@@ -14,8 +14,8 @@ from flask import Flask, jsonify, request, send_from_directory
 from da_watcher.api import DEFAULT_USER_AGENT, DeviantArtApiError, DeviantArtClient
 from da_watcher.config import AppConfig
 from da_watcher.env_utils import load_env_file, parse_bool, parse_csv_values
-from da_watcher.storage import load_state, save_state
 from da_watcher.watcher import process_user_once
+from da_watcher.storage import load_state, save_state
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_FILE = BASE_DIR / ".env"
@@ -63,6 +63,26 @@ def payload_bool(payload: Dict[str, Any], key: str, default: bool) -> bool:
     return default
 
 
+def payload_int(
+    payload: Dict[str, Any],
+    key: str,
+    default: int,
+    minimum: Optional[int] = None,
+    maximum: Optional[int] = None,
+) -> int:
+    value = payload.get(key, default)
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
 def parse_usernames(raw: str) -> List[str]:
     normalized = raw.replace("\n", ",").replace("\r", ",")
     return parse_csv_values(normalized)
@@ -76,6 +96,8 @@ def build_runtime_config(
     allow_preview: bool,
     seed_only: bool,
     verbose: bool,
+    page_size: int,
+    pages: int,
 ) -> AppConfig:
     return AppConfig(
         client_id=client_id,
@@ -83,8 +105,8 @@ def build_runtime_config(
         usernames=usernames,
         output_dir=DOWNLOADS_DIR,
         state_file=STATE_FILE,
-        pages=max(1, min(10, env_int("PAGES_PER_CHECK", 3))),
-        limit=max(1, min(24, env_int("PAGE_SIZE", 24))),
+        pages=pages,
+        limit=page_size,
         interval=0,
         include_mature=include_mature,
         allow_preview=allow_preview,
@@ -132,7 +154,12 @@ def scan_images() -> Dict[str, Any]:
     return {"images": images, "groups": groups, "count": len(images), "group_count": len(groups)}
 
 
-def run_download_job(config: AppConfig) -> Dict[str, Any]:
+def run_download_job(
+    config: AppConfig,
+    start_page: int,
+    end_page: int,
+    page_size: int,
+) -> Dict[str, Any]:
     state = load_state(config.state_file)
     client = DeviantArtClient(
         client_id=config.client_id,
@@ -153,7 +180,15 @@ def run_download_job(config: AppConfig) -> Dict[str, Any]:
 
     for username in config.usernames:
         try:
-            stats = process_user_once(config, client, state, username)
+            stats = process_user_once(
+                config,
+                client,
+                state,
+                username,
+                start_page=start_page,
+                end_page=end_page,
+                page_size=page_size,
+            )
             cycle_stats["users_checked"] += 1
             cycle_stats["pages_checked"] += stats["pages_checked"]
             cycle_stats["new_items"] += stats["new_items"]
@@ -178,6 +213,9 @@ def home() -> Any:
 
 @app.get("/api/defaults")
 def api_defaults() -> Any:
+    default_page_size = max(1, min(24, env_int("PAGE_SIZE", 24)))
+    default_end_page = max(1, env_int("PAGES_PER_CHECK", 3))
+
     return jsonify(
         {
             "client_id": os.getenv("DA_CLIENT_ID", ""),
@@ -187,6 +225,9 @@ def api_defaults() -> Any:
             "allow_preview": env_bool("ALLOW_PREVIEW", False),
             "seed_only": env_bool("SEED_ONLY", False),
             "verbose": env_bool("VERBOSE", False),
+            "start_page": 1,
+            "end_page": default_end_page,
+            "page_size": default_page_size,
         }
     )
 
@@ -220,6 +261,17 @@ def api_run() -> Any:
     seed_only = payload_bool(payload, "seed_only", env_bool("SEED_ONLY", False))
     verbose = payload_bool(payload, "verbose", env_bool("VERBOSE", False))
 
+    page_size = payload_int(payload, "page_size", env_int("PAGE_SIZE", 24), minimum=1, maximum=24)
+    start_page = payload_int(payload, "start_page", 1, minimum=1)
+    end_page = payload_int(payload, "end_page", max(1, env_int("PAGES_PER_CHECK", 3)), minimum=1)
+
+    if end_page < start_page:
+        return jsonify({"ok": False, "message": "end_page must be greater than or equal to start_page."}), 400
+
+    pages = end_page - start_page + 1
+    if pages > 200:
+        return jsonify({"ok": False, "message": "Requested page range is too large (max 200 pages)."}), 400
+
     if not run_lock.acquire(blocking=False):
         return jsonify({"ok": False, "message": "A download job is already running."}), 409
 
@@ -232,8 +284,15 @@ def api_run() -> Any:
             allow_preview=allow_preview,
             seed_only=seed_only,
             verbose=verbose,
+            page_size=page_size,
+            pages=pages,
         )
-        result = run_download_job(config)
+        result = run_download_job(
+            config=config,
+            start_page=start_page,
+            end_page=end_page,
+            page_size=page_size,
+        )
         gallery = scan_images()
         response = {
             "ok": len(result["errors"]) == 0,
@@ -241,6 +300,12 @@ def api_run() -> Any:
             "errors": result["errors"],
             "gallery_count": gallery["count"],
             "group_count": gallery["group_count"],
+            "pagination": {
+                "start_page": start_page,
+                "end_page": end_page,
+                "page_size": page_size,
+                "pages": pages,
+            },
         }
         return jsonify(response), 200
     finally:

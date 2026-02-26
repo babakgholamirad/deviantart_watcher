@@ -39,6 +39,9 @@ def process_user_once(
     client: DeviantArtClient,
     state: Dict[str, Any],
     username: str,
+    start_page: int = 1,
+    end_page: Optional[int] = None,
+    page_size: Optional[int] = None,
 ) -> Dict[str, int]:
     user_state = ensure_user_state(state, username)
     seen_ids = user_state.get("seen_ids", [])
@@ -52,6 +55,17 @@ def process_user_once(
     seeded_set = set(seeded_ids)
     processed_this_run = set()
     local_ids = collect_local_deviation_ids(config.output_dir, username)
+
+    effective_limit = page_size if page_size is not None else config.limit
+    effective_limit = max(1, min(24, int(effective_limit)))
+
+    normalized_start_page = max(1, int(start_page))
+    if end_page is None:
+        normalized_end_page = normalized_start_page + max(1, config.pages) - 1
+    else:
+        normalized_end_page = max(normalized_start_page, int(end_page))
+
+    max_pages = normalized_end_page - normalized_start_page + 1
 
     def unmark_seen(deviation_id: str) -> None:
         seen_set.discard(deviation_id)
@@ -104,19 +118,19 @@ def process_user_once(
                 username,
             )
 
-    offset = 0
+    offset = (normalized_start_page - 1) * effective_limit
     pages_checked = 0
     new_items = 0
     downloaded = 0
     existing = 0
     skipped = 0
 
-    for _ in range(config.pages):
+    for _ in range(max_pages):
         pages_checked += 1
         page = client.fetch_gallery_page(
             username=username,
             offset=offset,
-            limit=config.limit,
+            limit=effective_limit,
             include_mature=config.include_mature,
         )
         results = page.get("results") or []
