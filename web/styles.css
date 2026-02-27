@@ -48,6 +48,16 @@ html[data-theme="dark"] {
   box-sizing: border-box;
 }
 
+html.theme-transitioning,
+html.theme-transitioning * {
+  transition:
+    background-color 260ms ease,
+    border-color 260ms ease,
+    color 260ms ease,
+    box-shadow 260ms ease,
+    fill 260ms ease;
+}
+
 body {
   margin: 0;
   font-family: Segoe UI, Tahoma, sans-serif;
@@ -207,6 +217,15 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: transform 140ms ease, filter 140ms ease;
+}
+
+.icon-btn:hover {
+  transform: translateY(-1px);
+}
+
+.icon-btn:active {
+  transform: scale(0.94);
 }
 
 .favorite-btn {
@@ -219,6 +238,10 @@ button:disabled {
   background: var(--favorite-active-bg);
   color: #2a2200;
   border-color: color-mix(in srgb, #000 24%, var(--favorite-active-bg));
+}
+
+.favorite-btn.is-toggling .star-icon {
+  animation: starPulse 320ms ease;
 }
 
 .delete-artist-btn {
@@ -272,6 +295,78 @@ button:disabled {
   }
 }
 
+@keyframes starPulse {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.34) rotate(-8deg);
+  }
+  60% {
+    transform: scale(0.92) rotate(6deg);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes cardDelete {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.9);
+    filter: blur(1px);
+  }
+}
+
+@keyframes cardFavoriteFlash {
+  0% {
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+  45% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--favorite) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  }
+}
+
+@keyframes groupOpenReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes groupFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .gallery-header {
   margin: 20px 0 8px;
   display: flex;
@@ -292,7 +387,6 @@ button:disabled {
   padding: 8px 10px;
 }
 
-
 .favorites-filter-btn {
   border: 1px solid var(--border);
   background: var(--surface);
@@ -306,6 +400,7 @@ button:disabled {
   background: var(--favorite-soft);
   color: var(--favorite);
 }
+
 .gallery-count {
   color: var(--muted);
   font-size: 13px;
@@ -323,6 +418,14 @@ button:disabled {
   display: grid;
   gap: 12px;
   margin-top: 10px;
+  transition: opacity 180ms ease, transform 180ms ease, filter 180ms ease;
+}
+
+.artist-groups.is-searching {
+  opacity: 0.55;
+  transform: translateY(2px);
+  filter: blur(0.5px);
+  pointer-events: none;
 }
 
 .artist-group {
@@ -331,6 +434,20 @@ button:disabled {
   background: var(--surface);
   overflow: hidden;
   box-shadow: 0 6px 16px var(--shadow);
+}
+
+.artist-group.entering {
+  animation: groupFadeIn 280ms ease both;
+  animation-delay: calc(var(--group-index, 0) * 55ms);
+}
+
+.artist-group.opening .artist-grid {
+  animation: groupOpenReveal 250ms ease both;
+}
+
+.artist-group.opening .card {
+  animation: cardFadeIn 250ms ease both;
+  animation-delay: calc(var(--item-index, 0) * 20ms);
 }
 
 .artist-group.dragging {
@@ -399,6 +516,21 @@ button:disabled {
   overflow: hidden;
   box-shadow: 0 6px 16px var(--shadow);
   cursor: zoom-in;
+  transition: transform 160ms ease, box-shadow 180ms ease, opacity 180ms ease;
+}
+
+.card.entering {
+  animation: cardFadeIn 280ms ease both;
+  animation-delay: calc(var(--item-index, 0) * 28ms);
+}
+
+.card.favorite-flash {
+  animation: cardFavoriteFlash 320ms ease;
+}
+
+.card.is-deleting {
+  pointer-events: none;
+  animation: cardDelete 260ms ease forwards;
 }
 
 .card img {
@@ -568,4 +700,27 @@ button:disabled {
     font-size: 26px;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transitioning,
+  html.theme-transitioning * {
+    transition: none !important;
+  }
+
+  .artist-groups,
+  .card,
+  .icon-btn,
+  .favorite-btn .star-icon,
+  .artist-group.entering,
+  .artist-group.opening .artist-grid,
+  .artist-group.opening .card,
+  .card.entering,
+  .card.is-deleting,
+  .card.favorite-flash {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+
 
