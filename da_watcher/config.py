@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import os
@@ -27,6 +27,20 @@ class AppConfig:
     timeout: int
     user_agent: str
     verbose: bool
+
+
+def default_db_path() -> Path:
+    explicit = os.getenv("DB_FILE", "").strip()
+    if explicit:
+        return Path(explicit)
+
+    legacy = os.getenv("STATE_FILE", "state.json").strip() or "state.json"
+    legacy_path = Path(legacy)
+    if legacy_path.suffix.lower() == ".json":
+        return legacy_path.with_suffix(".db")
+    if legacy_path.suffix.lower() == ".db":
+        return legacy_path
+    return Path("state.db")
 
 
 def parse_config() -> AppConfig:
@@ -63,10 +77,12 @@ def parse_config() -> AppConfig:
         help="Directory where images are saved.",
     )
     parser.add_argument(
+        "--db-file",
         "--state-file",
+        dest="state_file",
         type=Path,
-        default=Path(os.getenv("STATE_FILE", "state.json")),
-        help="Path to local state file.",
+        default=default_db_path(),
+        help="Path to local SQLite database file.",
     )
     parser.add_argument(
         "--pages",
@@ -108,7 +124,7 @@ def parse_config() -> AppConfig:
         "--max-seen",
         type=int,
         default=env_int("MAX_SEEN_IDS", 5000),
-        help="Max number of seen IDs to keep in state.",
+        help="Max number of seen IDs to keep in database.",
     )
     parser.add_argument(
         "--timeout",
@@ -173,4 +189,3 @@ def parse_config() -> AppConfig:
         user_agent=args.user_agent,
         verbose=args.verbose,
     )
-

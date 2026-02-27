@@ -85,6 +85,16 @@ function setStatus(message, type = "") {
   }
 }
 
+async function postJson(url, payload) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  return { response, data };
+}
+
 function updateLightboxNavState() {
   const atStart = currentLightboxIndex <= 0;
   const atEnd = currentLightboxIndex >= lightboxItems.length - 1;
@@ -129,6 +139,56 @@ function closeLightbox() {
   lightboxNext.disabled = true;
 }
 
+async function deleteImage(relativePath) {
+  const confirmed = window.confirm(`Delete image?\n${relativePath}`);
+  if (!confirmed) {
+    return;
+  }
+
+  setLoading(true);
+  setStatus("Deleting image...", "");
+  try {
+    const { response, data } = await postJson("/api/delete/image", { relative_path: relativePath });
+    if (!response.ok || !data.ok) {
+      setStatus(data.message || "Failed to delete image.", "error");
+      return;
+    }
+
+    setStatus("Image deleted.", "success");
+    closeLightbox();
+    await loadGallery();
+  } catch (error) {
+    setStatus(error.message || "Failed to delete image.", "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function deleteArtist(artist) {
+  const confirmed = window.confirm(`Delete all images for artist "${artist}"?`);
+  if (!confirmed) {
+    return;
+  }
+
+  setLoading(true);
+  setStatus(`Deleting all images for ${artist}...`, "");
+  try {
+    const { response, data } = await postJson("/api/delete/artist", { artist });
+    if (!response.ok || !data.ok) {
+      setStatus(data.message || "Failed to delete artist images.", "error");
+      return;
+    }
+
+    setStatus(`Deleted images for ${artist}.`, "success");
+    closeLightbox();
+    await loadGallery();
+  } catch (error) {
+    setStatus(error.message || "Failed to delete artist images.", "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
 function renderGallery(groups, totalCount) {
   artistGroups.innerHTML = "";
   lightboxItems = [];
@@ -147,7 +207,32 @@ function renderGallery(groups, totalCount) {
     details.open = true;
 
     const summary = document.createElement("summary");
-    summary.innerHTML = `<span>${group.artist}</span><span class="artist-count">${group.count} image(s)</span>`;
+
+    const summaryTitle = document.createElement("span");
+    summaryTitle.textContent = group.artist;
+
+    const summaryActions = document.createElement("div");
+    summaryActions.className = "artist-summary-actions";
+
+    const countBadge = document.createElement("span");
+    countBadge.className = "artist-count";
+    countBadge.textContent = `${group.count} image(s)`;
+
+    const deleteArtistButton = document.createElement("button");
+    deleteArtistButton.type = "button";
+    deleteArtistButton.className = "danger-btn delete-artist-btn";
+    deleteArtistButton.textContent = "Delete All";
+    deleteArtistButton.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await deleteArtist(group.artist);
+    });
+
+    summaryActions.appendChild(countBadge);
+    summaryActions.appendChild(deleteArtistButton);
+
+    summary.appendChild(summaryTitle);
+    summary.appendChild(summaryActions);
 
     const grid = document.createElement("div");
     grid.className = "artist-grid";
@@ -162,9 +247,25 @@ function renderGallery(groups, totalCount) {
       img.alt = image.name;
       img.loading = "lazy";
 
+      const metaRow = document.createElement("div");
+      metaRow.className = "card-meta-row";
+
       const meta = document.createElement("div");
       meta.className = "card-meta";
       meta.textContent = image.relative_path;
+
+      const deleteImageButton = document.createElement("button");
+      deleteImageButton.type = "button";
+      deleteImageButton.className = "danger-btn delete-image-btn";
+      deleteImageButton.textContent = "Delete";
+      deleteImageButton.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await deleteImage(image.relative_path);
+      });
+
+      metaRow.appendChild(meta);
+      metaRow.appendChild(deleteImageButton);
 
       const itemIndex = lightboxItems.length;
       lightboxItems.push({
@@ -177,7 +278,7 @@ function renderGallery(groups, totalCount) {
       });
 
       card.appendChild(img);
-      card.appendChild(meta);
+      card.appendChild(metaRow);
       grid.appendChild(card);
     });
 
@@ -242,24 +343,18 @@ form.addEventListener("submit", async (event) => {
   setStatus("Downloading...", "");
 
   try {
-    const response = await fetch("/api/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id,
-        client_secret,
-        usernames,
-        include_mature: includeMatureInput.checked,
-        allow_preview: allowPreviewInput.checked,
-        seed_only: seedOnlyInput.checked,
-        verbose: verboseInput.checked,
-        start_page,
-        end_page,
-        page_size,
-      }),
+    const { response, data } = await postJson("/api/run", {
+      client_id,
+      client_secret,
+      usernames,
+      include_mature: includeMatureInput.checked,
+      allow_preview: allowPreviewInput.checked,
+      seed_only: seedOnlyInput.checked,
+      verbose: verboseInput.checked,
+      start_page,
+      end_page,
+      page_size,
     });
-
-    const data = await response.json();
 
     if (!response.ok || !data.ok) {
       const message = data.message || (data.errors && data.errors[0]) || "Download job failed.";

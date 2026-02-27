@@ -13,20 +13,44 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from da_watcher.api import DEFAULT_USER_AGENT, DeviantArtApiError, DeviantArtClient
 from da_watcher.config import AppConfig
+from da_watcher.database import WatcherDatabase
 from da_watcher.env_utils import load_env_file, parse_bool, parse_csv_values
 from da_watcher.watcher import process_user_once
-from da_watcher.storage import load_state, save_state
 
 BASE_DIR = Path(__file__).resolve().parent
 ENV_FILE = BASE_DIR / ".env"
 load_env_file(ENV_FILE)
 
 DOWNLOADS_DIR = BASE_DIR / os.getenv("OUTPUT_DIR", "downloads")
-STATE_FILE = BASE_DIR / os.getenv("STATE_FILE", "state.json")
+LEGACY_STATE_FILE = BASE_DIR / (os.getenv("STATE_FILE", "state.json").strip() or "state.json")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".avif"}
+
+
+def resolve_db_path() -> Path:
+    explicit = os.getenv("DB_FILE", "").strip()
+    if explicit:
+        return BASE_DIR / explicit
+
+    legacy = os.getenv("STATE_FILE", "state.json").strip() or "state.json"
+    legacy_path = Path(legacy)
+    if legacy_path.suffix.lower() == ".json":
+        return BASE_DIR / legacy_path.with_suffix(".db")
+    if legacy_path.suffix.lower() == ".db":
+        return BASE_DIR / legacy_path
+    return BASE_DIR / "state.db"
+
+
+DB_FILE = resolve_db_path()
+DATABASE = WatcherDatabase(DB_FILE)
 
 app = Flask(__name__, static_folder=str(BASE_DIR), static_url_path="")
 run_lock = threading.Lock()
+
+
+def bootstrap_database() -> None:
+    DATABASE.migrate_from_state_json(LEGACY_STATE_FILE)
+    DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    DATABASE.sync_images_from_filesystem(DOWNLOADS_DIR, IMAGE_EXTENSIONS)
 
 
 def env_int(name: str, default: int) -> int:
@@ -104,7 +128,7 @@ def build_runtime_config(
         client_secret=client_secret,
         usernames=usernames,
         output_dir=DOWNLOADS_DIR,
-        state_file=STATE_FILE,
+        state_file=DB_FILE,
         pages=pages,
         limit=page_size,
         interval=0,
@@ -120,38 +144,8 @@ def build_runtime_config(
 
 def scan_images() -> Dict[str, Any]:
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    images: List[Dict[str, Any]] = []
-    groups_map: Dict[str, List[Dict[str, Any]]] = {}
-
-    for path in DOWNLOADS_DIR.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
-            continue
-
-        rel_path = path.relative_to(DOWNLOADS_DIR).as_posix()
-        rel_parts = rel_path.split("/")
-        artist = rel_parts[0] if len(rel_parts) > 1 else "ungrouped"
-        stats = path.stat()
-
-        image = {
-            "artist": artist,
-            "name": path.name,
-            "relative_path": rel_path,
-            "url": f"/downloads/{rel_path}",
-            "mtime": int(stats.st_mtime),
-            "size_bytes": stats.st_size,
-        }
-        images.append(image)
-        groups_map.setdefault(artist, []).append(image)
-
-    images.sort(key=lambda item: item["mtime"], reverse=True)
-
-    groups: List[Dict[str, Any]] = []
-    for artist in sorted(groups_map.keys(), key=str.lower):
-        group_images = groups_map[artist]
-        group_images.sort(key=lambda item: item["mtime"], reverse=True)
-        groups.append({"artist": artist, "count": len(group_images), "images": group_images})
-
-    return {"images": images, "groups": groups, "count": len(images), "group_count": len(groups)}
+    DATABASE.sync_images_from_filesystem(DOWNLOADS_DIR, IMAGE_EXTENSIONS)
+    return DATABASE.get_gallery_data()
 
 
 def run_download_job(
@@ -160,7 +154,6 @@ def run_download_job(
     end_page: int,
     page_size: int,
 ) -> Dict[str, Any]:
-    state = load_state(config.state_file)
     client = DeviantArtClient(
         client_id=config.client_id,
         client_secret=config.client_secret,
@@ -183,7 +176,7 @@ def run_download_job(
             stats = process_user_once(
                 config,
                 client,
-                state,
+                DATABASE,
                 username,
                 start_page=start_page,
                 end_page=end_page,
@@ -202,7 +195,7 @@ def run_download_job(
         except Exception as exc:
             errors.append(f"Unexpected error for @{username}: {exc}")
 
-    save_state(config.state_file, state)
+    DATABASE.sync_images_from_filesystem(DOWNLOADS_DIR, IMAGE_EXTENSIONS)
     return {"stats": cycle_stats, "errors": errors}
 
 
@@ -312,15 +305,73 @@ def api_run() -> Any:
         run_lock.release()
 
 
+@app.post("/api/delete/image")
+def api_delete_image() -> Any:
+    payload = request.get_json(silent=True) or {}
+    relative_path = str(payload.get("relative_path", "")).strip()
+    if not relative_path:
+        return jsonify({"ok": False, "message": "relative_path is required."}), 400
+
+    if not run_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "message": "A download job is already running."}), 409
+
+    try:
+        result = DATABASE.delete_image(relative_path, DOWNLOADS_DIR)
+        gallery = scan_images()
+        if not result.get("deleted"):
+            return jsonify({"ok": False, "message": "Image not found.", "result": result}), 404
+
+        return jsonify(
+            {
+                "ok": True,
+                "result": result,
+                "gallery_count": gallery["count"],
+                "group_count": gallery["group_count"],
+            }
+        )
+    finally:
+        run_lock.release()
+
+
+@app.post("/api/delete/artist")
+def api_delete_artist() -> Any:
+    payload = request.get_json(silent=True) or {}
+    artist = str(payload.get("artist", "")).strip()
+    if not artist:
+        return jsonify({"ok": False, "message": "artist is required."}), 400
+
+    if not run_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "message": "A download job is already running."}), 409
+
+    try:
+        result = DATABASE.delete_artist_images(artist, DOWNLOADS_DIR)
+        gallery = scan_images()
+        if not result.get("deleted"):
+            return jsonify({"ok": False, "message": "No images found for this artist.", "result": result}), 404
+
+        return jsonify(
+            {
+                "ok": True,
+                "result": result,
+                "gallery_count": gallery["count"],
+                "group_count": gallery["group_count"],
+            }
+        )
+    finally:
+        run_lock.release()
+
+
 @app.get("/downloads/<path:filename>")
 def serve_download(filename: str) -> Any:
     return send_from_directory(DOWNLOADS_DIR, filename)
 
 
 def main() -> None:
-    DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    bootstrap_database()
     app.run(host="127.0.0.1", port=5000, debug=False)
 
+
+bootstrap_database()
 
 if __name__ == "__main__":
     main()

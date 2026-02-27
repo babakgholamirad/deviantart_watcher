@@ -1,62 +1,75 @@
-﻿# DeviantArt New Upload Downloader
+﻿# DeviantArt Watcher
 
-This app checks one or more DeviantArt user galleries and downloads newly detected images.
-It uses the official DeviantArt OAuth2 API instead of HTML scraping.
+Downloads new DeviantArt uploads and serves a local web UI gallery.
 
 ## What it does
 
-- Authenticates with your DeviantArt client_id and client_secret
-- Polls each configured user gallery (/gallery/all)
-- Tracks seen deviation IDs per user in state.json
-- Downloads only items not seen before
-- Optionally saves preview/content images if original download is unavailable
-- Includes a local web page (index.html) with a gallery and a download form
+- Uses DeviantArt OAuth2 API to fetch gallery uploads
+- Tracks seen deviations in SQLite (not JSON)
+- Supports multiple artists
+- Supports pagination, optional flags, dark/light theme
+- Supports deleting one image or all images of an artist from the UI
 
 ## Project structure
 
-- deviantart_watcher.py: thin CLI entrypoint
-- web_app.py: local Flask server for the landing page and gallery API
-- index.html: page structure
-- web/styles.css: page styles
-- web/app.js: frontend logic (form submit, gallery rendering, lightbox, theme, navigation arrows)
-- da_watcher/config.py: argument parsing and env/config validation
-- da_watcher/api.py: DeviantArt OAuth + API client
-- da_watcher/storage.py: output filename/state management helpers
-- da_watcher/watcher.py: polling loop and per-user processing logic
+- `deviantart_watcher.py`: CLI entrypoint
+- `web_app.py`: Flask server + API endpoints
+- `index.html`: page markup
+- `web/styles.css`: styles
+- `web/app.js`: frontend logic
+- `da_watcher/`: downloader, API client, DB, config
+
+## Database
+
+SQLite database file is `DB_FILE` (default `state.db`).
+
+Tables created automatically:
+
+- `artists`
+- `seen_deviations`
+- `images`
+
+At startup, app migrates legacy `STATE_FILE` JSON (default `state.json`) into DB and syncs `downloads/` into `images`.
 
 ## Setup
 
-powershell commands:
+```powershell
 cd C:\Users\HOME\Projects\deviantart_watcher
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
+```
 
-In .env, set DA_CLIENT_ID, DA_CLIENT_SECRET, and DA_USERNAMES.
+Set in `.env`:
+
+- `DA_CLIENT_ID`
+- `DA_CLIENT_SECRET`
+- `DA_USERNAMES`
+
+Optional:
+
+- `DB_FILE=state.db`
+- `STATE_FILE=state.json` (legacy migration source)
 
 ## Run CLI
 
+```powershell
 python .\deviantart_watcher.py
+```
 
 ## Run Web UI
 
+```powershell
 python .\web_app.py
+```
 
-Open: http://127.0.0.1:5000
+Open: `http://127.0.0.1:5000`
 
-The landing page lets you:
+## Web UI features
 
-- Fill DA_CLIENT_ID, DA_CLIENT_SECRET, and DA_USERNAMES
-- Set pagination controls (start_page, end_page, page_size)
-- Toggle optional flags (INCLUDE_MATURE, ALLOW_PREVIEW, SEED_ONLY, VERBOSE)
-- Click Start Download to run a one-time download job
-- See loading animation while the job is running
-- View images grouped by artist folder (collapsible sections)
-- Click any image to expand it in a full-screen viewer with next/previous arrows
-- See there is no pictures when gallery is empty
-
-## Notes
-
-- Downloading requires respecting artist permissions and DeviantArt terms.
-- If an item is not marked downloadable, it is skipped unless ALLOW_PREVIEW=true.
-
+- Download run with pagination (`start_page`, `end_page`, `page_size`)
+- Optional flags (`INCLUDE_MATURE`, `ALLOW_PREVIEW`, `SEED_ONLY`, `VERBOSE`)
+- Gallery grouped by artist
+- Click image to open lightbox with previous/next arrows
+- Delete one image
+- Delete all images for an artist
