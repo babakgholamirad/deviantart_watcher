@@ -132,6 +132,12 @@ class DeviantArtClient:
             params={"mature_content": str(include_mature).lower()},
         )
 
+    def fetch_deviation(self, deviation_id: str, include_mature: bool) -> Dict[str, Any]:
+        return self.api_get(
+            f"/deviation/{deviation_id}",
+            params={"mature_content": str(include_mature).lower()},
+        )
+
     def download_file(self, url: str, destination: Path) -> bool:
         if destination.exists():
             return False
@@ -151,5 +157,3 @@ class DeviantArtClient:
             if tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)
             raise
-
-

@@ -1,4 +1,4 @@
-﻿# DeviantArt Watcher
+# DeviantArt Watcher
 
 Downloads new DeviantArt uploads and serves a local web UI gallery.
 
@@ -6,6 +6,7 @@ Downloads new DeviantArt uploads and serves a local web UI gallery.
 
 - Uses DeviantArt OAuth2 API to fetch gallery uploads
 - Tracks seen deviations in SQLite (not JSON)
+- Stores image metadata (`image_title` + `tags`) in DB for search
 - Supports multiple artists
 - Supports pagination, optional flags, dark/light theme
 - Supports deleting one image or all images of an artist from the UI
@@ -70,6 +71,7 @@ Open: `http://127.0.0.1:5000`
 - Download run with pagination (`start_page`, `end_page`, `page_size`)
 - Optional flags (`INCLUDE_MATURE`, `ALLOW_PREVIEW`, `SEED_ONLY`, `VERBOSE`)
 - Gallery grouped by artist
+- Search by image name/title and tags
 - Click image to open lightbox with previous/next arrows
-- Delete one image
-- Delete all images for an artist
+- Trash icon button to delete one image
+- Trash icon button to delete all images of an artist

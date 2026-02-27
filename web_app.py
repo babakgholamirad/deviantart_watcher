@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Local web UI for running the downloader and browsing downloaded images."""
 
 from __future__ import annotations
@@ -142,10 +142,10 @@ def build_runtime_config(
     )
 
 
-def scan_images() -> Dict[str, Any]:
+def scan_images(search_query: str = "") -> Dict[str, Any]:
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     DATABASE.sync_images_from_filesystem(DOWNLOADS_DIR, IMAGE_EXTENSIONS)
-    return DATABASE.get_gallery_data()
+    return DATABASE.get_gallery_data(search_query=search_query)
 
 
 def run_download_job(
@@ -227,7 +227,8 @@ def api_defaults() -> Any:
 
 @app.get("/api/gallery")
 def api_gallery() -> Any:
-    return jsonify(scan_images())
+    query = str(request.args.get("q", "")).strip()
+    return jsonify(scan_images(query))
 
 
 @app.post("/api/run")

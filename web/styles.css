@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --bg: #f6f8fb;
   --bg-accent: #edf2fa;
   --panel: #ffffff;
@@ -193,15 +193,30 @@ button:disabled {
   border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .delete-artist-btn {
-  padding: 6px 10px;
-  font-size: 12px;
+  width: 32px;
+  height: 32px;
 }
 
 .delete-image-btn {
-  padding: 4px 8px;
-  font-size: 11px;
-  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+}
+
+.trash-icon {
+  width: 15px;
+  height: 18px;
+  fill: currentColor;
 }
 
 .status {
@@ -246,9 +261,22 @@ button:disabled {
   gap: 8px;
 }
 
+.gallery-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.search-input {
+  width: min(360px, 60vw);
+  min-width: 180px;
+  padding: 8px 10px;
+}
+
 .gallery-count {
   color: var(--muted);
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .empty {
@@ -327,17 +355,39 @@ button:disabled {
 
 .card-meta-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
 }
 
-.card-meta {
+.card-meta-text {
   flex: 1;
   min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.card-title {
   font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-meta {
+  font-size: 11px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-tags {
+  font-size: 11px;
+  color: var(--accent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -433,6 +483,20 @@ button:disabled {
 
   .page-grid {
     grid-template-columns: 1fr;
+  }
+
+  .gallery-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gallery-tools {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .search-input {
+    width: 100%;
   }
 
   .lightbox-nav {

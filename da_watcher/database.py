@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import sqlite3
@@ -19,6 +19,23 @@ class WatcherDatabase:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+
+    def _table_columns(self, connection: sqlite3.Connection, table_name: str) -> Set[str]:
+        rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return {str(row["name"]).lower() for row in rows}
+
+    def _migrate_images_schema(self, connection: sqlite3.Connection) -> None:
+        columns = self._table_columns(connection, "images")
+
+        if "image_title" not in columns:
+            connection.execute("ALTER TABLE images ADD COLUMN image_title TEXT NOT NULL DEFAULT ''")
+        if "tags" not in columns:
+            connection.execute("ALTER TABLE images ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
+
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_images_title_nocase ON images(image_title COLLATE NOCASE)"
+        )
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_images_tags_nocase ON images(tags COLLATE NOCASE)")
 
     def _initialize_schema(self) -> None:
         with self._connect() as connection:
@@ -48,6 +65,8 @@ class WatcherDatabase:
                     artist_id INTEGER NOT NULL,
                     deviation_id TEXT NOT NULL,
                     relative_path TEXT NOT NULL UNIQUE,
+                    image_title TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '',
                     file_size INTEGER NOT NULL DEFAULT 0,
                     mtime INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -59,6 +78,7 @@ class WatcherDatabase:
                 ON images(artist_id);
                 """
             )
+            self._migrate_images_schema(connection)
 
     def _get_artist_id(self, connection: sqlite3.Connection, username: str) -> int | None:
         row = connection.execute(
@@ -77,6 +97,23 @@ class WatcherDatabase:
             (username,),
         )
         return int(cursor.lastrowid)
+
+    def _normalize_tags(self, tags: Sequence[str] | None) -> str:
+        if not tags:
+            return ""
+
+        normalized: List[str] = []
+        seen: Set[str] = set()
+        for raw_tag in tags:
+            tag = str(raw_tag).strip()
+            if not tag:
+                continue
+            key = tag.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(tag)
+        return ", ".join(normalized)
 
     def migrate_from_state_json(self, state_json_path: Path) -> Dict[str, int]:
         if not state_json_path.exists() or state_json_path.suffix.lower() != ".json":
@@ -208,28 +245,63 @@ class WatcherDatabase:
                 (artist_id, artist_id, max_seen),
             )
 
-    def upsert_image(self, username: str, deviation_id: str, file_path: Path, output_dir: Path) -> None:
+    def upsert_image(
+        self,
+        username: str,
+        deviation_id: str,
+        file_path: Path,
+        output_dir: Path,
+        image_title: str = "",
+        tags: Sequence[str] | None = None,
+    ) -> None:
         if not file_path.exists() or not file_path.is_file():
             return
 
         relative_path = file_path.relative_to(output_dir).as_posix()
         stats = file_path.stat()
 
+        fallback_title = file_path.stem
+        separator_index = fallback_title.find("_")
+        if separator_index > 0:
+            fallback_title = fallback_title[separator_index + 1 :]
+
+        clean_title = image_title.strip() if isinstance(image_title, str) else ""
+        title_to_store = clean_title or fallback_title
+        tags_to_store = self._normalize_tags(tags)
+
         with self._connect() as connection:
             artist_id = self._get_or_create_artist_id(connection, username)
             connection.execute(
                 """
-                INSERT INTO images (artist_id, deviation_id, relative_path, file_size, mtime)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO images (
+                    artist_id,
+                    deviation_id,
+                    relative_path,
+                    image_title,
+                    tags,
+                    file_size,
+                    mtime
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(relative_path)
                 DO UPDATE SET
                     artist_id = excluded.artist_id,
                     deviation_id = excluded.deviation_id,
+                    image_title = excluded.image_title,
+                    tags = excluded.tags,
                     file_size = excluded.file_size,
                     mtime = excluded.mtime,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (artist_id, deviation_id, relative_path, int(stats.st_size), int(stats.st_mtime)),
+                (
+                    artist_id,
+                    deviation_id,
+                    relative_path,
+                    title_to_store,
+                    tags_to_store,
+                    int(stats.st_size),
+                    int(stats.st_mtime),
+                ),
             )
 
     def sync_images_from_filesystem(self, output_dir: Path, image_extensions: Set[str]) -> Dict[str, int]:
@@ -245,11 +317,13 @@ class WatcherDatabase:
             artist = parts[0] if len(parts) > 1 else "ungrouped"
             separator_index = path.name.find("_")
             deviation_id = path.name[:separator_index] if separator_index > 0 else path.stem
+            inferred_title = path.stem[separator_index + 1 :] if separator_index > 0 else path.stem
             stats = path.stat()
 
             discovered[relative_path] = {
                 "artist": artist,
                 "deviation_id": deviation_id,
+                "image_title": inferred_title,
                 "size": int(stats.st_size),
                 "mtime": int(stats.st_mtime),
             }
@@ -271,12 +345,28 @@ class WatcherDatabase:
                 artist_id = self._get_or_create_artist_id(connection, payload["artist"])
                 connection.execute(
                     """
-                    INSERT INTO images (artist_id, deviation_id, relative_path, file_size, mtime)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO images (
+                        artist_id,
+                        deviation_id,
+                        relative_path,
+                        image_title,
+                        tags,
+                        file_size,
+                        mtime
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(relative_path)
                     DO UPDATE SET
                         artist_id = excluded.artist_id,
                         deviation_id = excluded.deviation_id,
+                        image_title = CASE
+                            WHEN images.image_title = '' THEN excluded.image_title
+                            ELSE images.image_title
+                        END,
+                        tags = CASE
+                            WHEN images.tags = '' THEN excluded.tags
+                            ELSE images.tags
+                        END,
                         file_size = excluded.file_size,
                         mtime = excluded.mtime,
                         updated_at = CURRENT_TIMESTAMP
@@ -285,6 +375,8 @@ class WatcherDatabase:
                         artist_id,
                         payload["deviation_id"],
                         relative_path,
+                        str(payload["image_title"]),
+                        "",
                         payload["size"],
                         payload["mtime"],
                     ),
@@ -295,21 +387,44 @@ class WatcherDatabase:
             "deleted_stale": len(existing_paths - set(discovered.keys())),
         }
 
-    def get_gallery_data(self) -> Dict[str, Any]:
+    def get_gallery_data(self, search_query: str = "") -> Dict[str, Any]:
+        cleaned_query = search_query.strip()
+
         with self._connect() as connection:
-            rows = connection.execute(
-                """
+            query = """
                 SELECT
                     artists.username AS artist,
                     images.deviation_id AS deviation_id,
                     images.relative_path AS relative_path,
+                    images.image_title AS image_title,
+                    images.tags AS tags,
                     images.file_size AS file_size,
                     images.mtime AS mtime
                 FROM images
                 INNER JOIN artists ON artists.id = images.artist_id
-                ORDER BY images.mtime DESC, images.id DESC
-                """
-            ).fetchall()
+            """
+            params: List[str] = []
+
+            terms = [term for term in cleaned_query.split() if term]
+            if terms:
+                where_clauses: List[str] = []
+                for term in terms:
+                    like_value = f"%{term}%"
+                    where_clauses.append(
+                        """
+                        (
+                            images.image_title LIKE ? COLLATE NOCASE
+                            OR images.tags LIKE ? COLLATE NOCASE
+                            OR images.relative_path LIKE ? COLLATE NOCASE
+                            OR artists.username LIKE ? COLLATE NOCASE
+                        )
+                        """
+                    )
+                    params.extend([like_value, like_value, like_value, like_value])
+                query += " WHERE " + " AND ".join(where_clauses)
+
+            query += " ORDER BY images.mtime DESC, images.id DESC"
+            rows = connection.execute(query, params).fetchall()
 
         images: List[Dict[str, Any]] = []
         groups_map: Dict[str, List[Dict[str, Any]]] = {}
@@ -317,10 +432,16 @@ class WatcherDatabase:
         for row in rows:
             artist = str(row["artist"])
             relative_path = str(row["relative_path"])
+            tags_text = str(row["tags"] or "").strip()
+            tags = [tag.strip() for tag in tags_text.split(",") if tag.strip()]
+
             image = {
                 "artist": artist,
                 "deviation_id": str(row["deviation_id"]),
                 "name": Path(relative_path).name,
+                "title": str(row["image_title"] or "").strip() or Path(relative_path).name,
+                "tags": tags,
+                "tags_text": tags_text,
                 "relative_path": relative_path,
                 "url": f"/downloads/{relative_path}",
                 "mtime": int(row["mtime"]),
@@ -334,7 +455,13 @@ class WatcherDatabase:
             group_images = groups_map[artist]
             groups.append({"artist": artist, "count": len(group_images), "images": group_images})
 
-        return {"images": images, "groups": groups, "count": len(images), "group_count": len(groups)}
+        return {
+            "images": images,
+            "groups": groups,
+            "count": len(images),
+            "group_count": len(groups),
+            "query": cleaned_query,
+        }
 
     def delete_image(self, relative_path: str, output_dir: Path) -> Dict[str, Any]:
         cleaned_relative_path = str(Path(relative_path).as_posix()).lstrip("/")

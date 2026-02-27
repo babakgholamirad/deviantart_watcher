@@ -1,4 +1,4 @@
-﻿const THEME_STORAGE_KEY = "da_watcher_theme";
+const THEME_STORAGE_KEY = "da_watcher_theme";
 
 const form = document.getElementById("downloadForm");
 const startButton = document.getElementById("startButton");
@@ -7,6 +7,7 @@ const statusText = document.getElementById("statusText");
 const emptyText = document.getElementById("emptyText");
 const galleryCount = document.getElementById("galleryCount");
 const artistGroups = document.getElementById("artistGroups");
+const searchInput = document.getElementById("searchInput");
 
 const themeToggle = document.getElementById("themeToggle");
 
@@ -32,6 +33,8 @@ const lightboxNext = document.getElementById("lightboxNext");
 
 let lightboxItems = [];
 let currentLightboxIndex = -1;
+let searchDebounceTimer = null;
+let currentSearchQuery = "";
 
 function toInt(value, fallback, minValue, maxValue = null) {
   const parsed = Number.parseInt(String(value), 10);
@@ -83,6 +86,25 @@ function setStatus(message, type = "") {
   if (type) {
     statusText.classList.add(type);
   }
+}
+
+function buildTrashIcon() {
+  return `
+    <svg class="trash-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 3h6l1 2h5v2H3V5h5l1-2Zm-2 6h2v9H7V9Zm4 0h2v9h-2V9Zm4 0h2v9h-2V9Z"></path>
+    </svg>
+  `;
+}
+
+function createTrashButton(className, ariaLabel, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `danger-btn icon-btn ${className}`;
+  button.setAttribute("aria-label", ariaLabel);
+  button.title = ariaLabel;
+  button.innerHTML = buildTrashIcon();
+  button.addEventListener("click", onClick);
+  return button;
 }
 
 async function postJson(url, payload) {
@@ -156,7 +178,7 @@ async function deleteImage(relativePath) {
 
     setStatus("Image deleted.", "success");
     closeLightbox();
-    await loadGallery();
+    await loadGallery(currentSearchQuery);
   } catch (error) {
     setStatus(error.message || "Failed to delete image.", "error");
   } finally {
@@ -181,12 +203,18 @@ async function deleteArtist(artist) {
 
     setStatus(`Deleted images for ${artist}.`, "success");
     closeLightbox();
-    await loadGallery();
+    await loadGallery(currentSearchQuery);
   } catch (error) {
     setStatus(error.message || "Failed to delete artist images.", "error");
   } finally {
     setLoading(false);
   }
+}
+
+function buildLightboxCaption(image) {
+  const tags = Array.isArray(image.tags) ? image.tags : [];
+  const tagText = tags.length ? ` | tags: ${tags.join(", ")}` : "";
+  return `${image.title || image.relative_path}${tagText}`;
 }
 
 function renderGallery(groups, totalCount) {
@@ -196,6 +224,9 @@ function renderGallery(groups, totalCount) {
 
   if (!totalCount) {
     emptyText.style.display = "block";
+    emptyText.textContent = currentSearchQuery
+      ? `No pictures found for "${currentSearchQuery}".`
+      : "there is no pictures";
     return;
   }
 
@@ -218,15 +249,15 @@ function renderGallery(groups, totalCount) {
     countBadge.className = "artist-count";
     countBadge.textContent = `${group.count} image(s)`;
 
-    const deleteArtistButton = document.createElement("button");
-    deleteArtistButton.type = "button";
-    deleteArtistButton.className = "danger-btn delete-artist-btn";
-    deleteArtistButton.textContent = "Delete All";
-    deleteArtistButton.addEventListener("click", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      await deleteArtist(group.artist);
-    });
+    const deleteArtistButton = createTrashButton(
+      "delete-artist-btn",
+      `Delete all images for ${group.artist}`,
+      async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await deleteArtist(group.artist);
+      }
+    );
 
     summaryActions.appendChild(countBadge);
     summaryActions.appendChild(deleteArtistButton);
@@ -244,33 +275,51 @@ function renderGallery(groups, totalCount) {
       const img = document.createElement("img");
       const src = `${image.url}?v=${encodeURIComponent(image.mtime)}`;
       img.src = src;
-      img.alt = image.name;
+      img.alt = image.title || image.name;
       img.loading = "lazy";
 
       const metaRow = document.createElement("div");
       metaRow.className = "card-meta-row";
 
-      const meta = document.createElement("div");
-      meta.className = "card-meta";
-      meta.textContent = image.relative_path;
+      const metaText = document.createElement("div");
+      metaText.className = "card-meta-text";
 
-      const deleteImageButton = document.createElement("button");
-      deleteImageButton.type = "button";
-      deleteImageButton.className = "danger-btn delete-image-btn";
-      deleteImageButton.textContent = "Delete";
-      deleteImageButton.addEventListener("click", async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        await deleteImage(image.relative_path);
-      });
+      const cardTitle = document.createElement("div");
+      cardTitle.className = "card-title";
+      cardTitle.textContent = image.title || image.name;
 
-      metaRow.appendChild(meta);
+      const pathMeta = document.createElement("div");
+      pathMeta.className = "card-meta";
+      pathMeta.textContent = image.relative_path;
+
+      metaText.appendChild(cardTitle);
+      metaText.appendChild(pathMeta);
+
+      const tags = Array.isArray(image.tags) ? image.tags : [];
+      if (tags.length) {
+        const tagsMeta = document.createElement("div");
+        tagsMeta.className = "card-tags";
+        tagsMeta.textContent = `# ${tags.join("  # ")}`;
+        metaText.appendChild(tagsMeta);
+      }
+
+      const deleteImageButton = createTrashButton(
+        "delete-image-btn",
+        `Delete ${image.relative_path}`,
+        async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await deleteImage(image.relative_path);
+        }
+      );
+
+      metaRow.appendChild(metaText);
       metaRow.appendChild(deleteImageButton);
 
       const itemIndex = lightboxItems.length;
       lightboxItems.push({
         url: src,
-        caption: image.relative_path,
+        caption: buildLightboxCaption(image),
       });
 
       card.addEventListener("click", () => {
@@ -309,8 +358,10 @@ async function loadDefaults() {
   pageSizeInput.value = toInt(data.page_size, 24, 1, 24);
 }
 
-async function loadGallery() {
-  const response = await fetch("/api/gallery", { cache: "no-store" });
+async function loadGallery(searchQuery = currentSearchQuery) {
+  currentSearchQuery = (searchQuery || "").trim();
+  const queryString = currentSearchQuery ? `?q=${encodeURIComponent(currentSearchQuery)}` : "";
+  const response = await fetch(`/api/gallery${queryString}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error("Failed to load gallery.");
   }
@@ -368,13 +419,29 @@ form.addEventListener("submit", async (event) => {
       );
     }
 
-    await loadGallery();
+    await loadGallery(currentSearchQuery);
   } catch (error) {
     setStatus(error.message || "Unexpected error.", "error");
   } finally {
     setLoading(false);
   }
 });
+
+if (searchInput) {
+  searchInput.addEventListener("input", () => {
+    if (searchDebounceTimer) {
+      window.clearTimeout(searchDebounceTimer);
+    }
+
+    searchDebounceTimer = window.setTimeout(async () => {
+      try {
+        await loadGallery(searchInput.value);
+      } catch (error) {
+        setStatus(error.message || "Failed to load gallery.", "error");
+      }
+    }, 220);
+  });
+}
 
 themeToggle.addEventListener("click", toggleTheme);
 

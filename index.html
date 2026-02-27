@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
@@ -79,7 +79,16 @@
 
     <div class="gallery-header">
       <h2>Gallery</h2>
-      <span id="galleryCount" class="gallery-count">0 image(s)</span>
+      <div class="gallery-tools">
+        <input
+          id="searchInput"
+          class="search-input"
+          type="search"
+          placeholder="Search by image name or tags"
+          aria-label="Search images by image name or tags"
+        >
+        <span id="galleryCount" class="gallery-count">0 image(s)</span>
+      </div>
     </div>
 
     <p id="emptyText" class="empty">there is no pictures</p>
