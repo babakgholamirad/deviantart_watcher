@@ -31,6 +31,8 @@ class WatcherDatabase:
             connection.execute("ALTER TABLE images ADD COLUMN image_title TEXT NOT NULL DEFAULT ''")
         if "tags" not in columns:
             connection.execute("ALTER TABLE images ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
+        if "is_favorite" not in columns:
+            connection.execute("ALTER TABLE images ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
 
         connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_images_title_nocase ON images(image_title COLLATE NOCASE)"
@@ -67,6 +69,7 @@ class WatcherDatabase:
                     relative_path TEXT NOT NULL UNIQUE,
                     image_title TEXT NOT NULL DEFAULT '',
                     tags TEXT NOT NULL DEFAULT '',
+                    is_favorite INTEGER NOT NULL DEFAULT 0 CHECK (is_favorite IN (0, 1)),
                     file_size INTEGER NOT NULL DEFAULT 0,
                     mtime INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -279,16 +282,18 @@ class WatcherDatabase:
                     relative_path,
                     image_title,
                     tags,
+                    is_favorite,
                     file_size,
                     mtime
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(relative_path)
                 DO UPDATE SET
                     artist_id = excluded.artist_id,
                     deviation_id = excluded.deviation_id,
                     image_title = excluded.image_title,
                     tags = excluded.tags,
+                    is_favorite = images.is_favorite,
                     file_size = excluded.file_size,
                     mtime = excluded.mtime,
                     updated_at = CURRENT_TIMESTAMP
@@ -299,6 +304,7 @@ class WatcherDatabase:
                     relative_path,
                     title_to_store,
                     tags_to_store,
+                    0,
                     int(stats.st_size),
                     int(stats.st_mtime),
                 ),
@@ -351,10 +357,11 @@ class WatcherDatabase:
                         relative_path,
                         image_title,
                         tags,
+                        is_favorite,
                         file_size,
                         mtime
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(relative_path)
                     DO UPDATE SET
                         artist_id = excluded.artist_id,
@@ -367,6 +374,7 @@ class WatcherDatabase:
                             WHEN images.tags = '' THEN excluded.tags
                             ELSE images.tags
                         END,
+                        is_favorite = images.is_favorite,
                         file_size = excluded.file_size,
                         mtime = excluded.mtime,
                         updated_at = CURRENT_TIMESTAMP
@@ -377,6 +385,7 @@ class WatcherDatabase:
                         relative_path,
                         str(payload["image_title"]),
                         "",
+                        0,
                         payload["size"],
                         payload["mtime"],
                     ),
@@ -387,7 +396,7 @@ class WatcherDatabase:
             "deleted_stale": len(existing_paths - set(discovered.keys())),
         }
 
-    def get_gallery_data(self, search_query: str = "") -> Dict[str, Any]:
+    def get_gallery_data(self, search_query: str = "", favorites_only: bool = False) -> Dict[str, Any]:
         cleaned_query = search_query.strip()
 
         with self._connect() as connection:
@@ -398,6 +407,7 @@ class WatcherDatabase:
                     images.relative_path AS relative_path,
                     images.image_title AS image_title,
                     images.tags AS tags,
+                    images.is_favorite AS is_favorite,
                     images.file_size AS file_size,
                     images.mtime AS mtime
                 FROM images
@@ -405,9 +415,12 @@ class WatcherDatabase:
             """
             params: List[str] = []
 
+            where_clauses: List[str] = []
+            if favorites_only:
+                where_clauses.append("images.is_favorite = 1")
+
             terms = [term for term in cleaned_query.split() if term]
             if terms:
-                where_clauses: List[str] = []
                 for term in terms:
                     like_value = f"%{term}%"
                     where_clauses.append(
@@ -421,6 +434,8 @@ class WatcherDatabase:
                         """
                     )
                     params.extend([like_value, like_value, like_value, like_value])
+
+            if where_clauses:
                 query += " WHERE " + " AND ".join(where_clauses)
 
             query += " ORDER BY images.mtime DESC, images.id DESC"
@@ -442,6 +457,7 @@ class WatcherDatabase:
                 "title": str(row["image_title"] or "").strip() or Path(relative_path).name,
                 "tags": tags,
                 "tags_text": tags_text,
+                "is_favorite": bool(int(row["is_favorite"])),
                 "relative_path": relative_path,
                 "url": f"/downloads/{relative_path}",
                 "mtime": int(row["mtime"]),
@@ -461,6 +477,39 @@ class WatcherDatabase:
             "count": len(images),
             "group_count": len(groups),
             "query": cleaned_query,
+            "favorites_only": bool(favorites_only),
+        }
+
+    def set_image_favorite(self, relative_path: str, is_favorite: bool) -> Dict[str, Any]:
+        cleaned_relative_path = str(Path(relative_path).as_posix()).lstrip("/")
+        if not cleaned_relative_path:
+            return {"updated": False, "message": "relative_path is required."}
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT id FROM images WHERE relative_path = ?",
+                (cleaned_relative_path,),
+            ).fetchone()
+            if not row:
+                return {
+                    "updated": False,
+                    "message": "Image not found.",
+                    "relative_path": cleaned_relative_path,
+                }
+
+            connection.execute(
+                """
+                UPDATE images
+                SET is_favorite = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE relative_path = ?
+                """,
+                (1 if is_favorite else 0, cleaned_relative_path),
+            )
+
+        return {
+            "updated": True,
+            "relative_path": cleaned_relative_path,
+            "is_favorite": bool(is_favorite),
         }
 
     def delete_image(self, relative_path: str, output_dir: Path) -> Dict[str, Any]:
@@ -560,3 +609,6 @@ class WatcherDatabase:
             user_dir.rmdir()
 
         return {"deleted": deleted_files > 0, "artist": username_clean, "deleted_files": deleted_files}
+
+
+

@@ -11,6 +11,9 @@
   --danger: #b42318;
   --danger-soft: #ffe3df;
   --ok: #157347;
+  --favorite: #a36b00;
+  --favorite-soft: #fff2cf;
+  --favorite-active-bg: #ffd76a;
   --shadow: rgba(16, 24, 40, 0.06);
   --lightbox-bg: rgba(12, 16, 23, 0.88);
   --lightbox-text: #e7ecf7;
@@ -31,6 +34,9 @@ html[data-theme="dark"] {
   --danger: #ff8b8b;
   --danger-soft: #3d1f24;
   --ok: #57c58a;
+  --favorite: #ffd45e;
+  --favorite-soft: #3a2f1a;
+  --favorite-active-bg: #f6be3e;
   --shadow: rgba(0, 0, 0, 0.3);
   --lightbox-bg: rgba(4, 7, 12, 0.94);
   --lightbox-text: #f4f7ff;
@@ -203,6 +209,18 @@ button:disabled {
   justify-content: center;
 }
 
+.favorite-btn {
+  background: var(--favorite-soft);
+  color: var(--favorite);
+  border: 1px solid color-mix(in srgb, var(--favorite) 42%, transparent);
+}
+
+.favorite-btn.is-favorite {
+  background: var(--favorite-active-bg);
+  color: #2a2200;
+  border-color: color-mix(in srgb, #000 24%, var(--favorite-active-bg));
+}
+
 .delete-artist-btn {
   width: 32px;
   height: 32px;
@@ -213,9 +231,10 @@ button:disabled {
   height: 28px;
 }
 
-.trash-icon {
+.trash-icon,
+.star-icon {
   width: 15px;
-  height: 18px;
+  height: 15px;
   fill: currentColor;
 }
 
@@ -273,6 +292,20 @@ button:disabled {
   padding: 8px 10px;
 }
 
+
+.favorites-filter-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.favorites-filter-btn.active {
+  border-color: color-mix(in srgb, var(--favorite) 55%, transparent);
+  background: var(--favorite-soft);
+  color: var(--favorite);
+}
 .gallery-count {
   color: var(--muted);
   font-size: 13px;
@@ -300,6 +333,11 @@ button:disabled {
   box-shadow: 0 6px 16px var(--shadow);
 }
 
+.artist-group.dragging {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
 .artist-group summary {
   list-style: none;
   cursor: pointer;
@@ -313,8 +351,26 @@ button:disabled {
   background: var(--surface-soft);
 }
 
+.artist-group[draggable="true"] summary {
+  cursor: grab;
+}
+
 .artist-group summary::-webkit-details-marker {
   display: none;
+}
+
+.artist-summary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.drag-handle {
+  color: var(--muted);
+  font-size: 14px;
+  letter-spacing: 1px;
+  user-select: none;
 }
 
 .artist-summary-actions {
@@ -366,6 +422,13 @@ button:disabled {
   min-width: 0;
   display: grid;
   gap: 4px;
+}
+
+.card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .card-title {
@@ -505,3 +568,4 @@ button:disabled {
     font-size: 26px;
   }
 }
+

@@ -10,6 +10,7 @@ Downloads new DeviantArt uploads and serves a local web UI gallery.
 - Supports multiple artists
 - Supports pagination, optional flags, dark/light theme
 - Supports deleting one image or all images of an artist from the UI
+- Supports favorite toggle (star icon) per image
 
 ## Project structure
 
@@ -73,5 +74,8 @@ Open: `http://127.0.0.1:5000`
 - Gallery grouped by artist
 - Search by image name/title and tags
 - Click image to open lightbox with previous/next arrows
+- Star icon button to toggle image favorite`r`n- Show Favorites button to display only favorite images
 - Trash icon button to delete one image
 - Trash icon button to delete all images of an artist
+- Drag and drop artist groups to change their display order
+

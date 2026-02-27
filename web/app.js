@@ -1,4 +1,5 @@
 const THEME_STORAGE_KEY = "da_watcher_theme";
+const ARTIST_ORDER_STORAGE_KEY = "da_watcher_artist_order";
 
 const form = document.getElementById("downloadForm");
 const startButton = document.getElementById("startButton");
@@ -8,6 +9,7 @@ const emptyText = document.getElementById("emptyText");
 const galleryCount = document.getElementById("galleryCount");
 const artistGroups = document.getElementById("artistGroups");
 const searchInput = document.getElementById("searchInput");
+const favoritesOnlyButton = document.getElementById("favoritesOnlyButton");
 
 const themeToggle = document.getElementById("themeToggle");
 
@@ -35,6 +37,8 @@ let lightboxItems = [];
 let currentLightboxIndex = -1;
 let searchDebounceTimer = null;
 let currentSearchQuery = "";
+let showFavoritesOnly = false;
+let draggedArtistGroup = null;
 
 function toInt(value, fallback, minValue, maxValue = null) {
   const parsed = Number.parseInt(String(value), 10);
@@ -75,6 +79,66 @@ function toggleTheme() {
   applyTheme(next);
 }
 
+function getStoredArtistOrder() {
+  try {
+    const raw = localStorage.getItem(ARTIST_ORDER_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function saveArtistOrder(order) {
+  const cleaned = Array.from(new Set(order.filter((item) => typeof item === "string" && item.trim())));
+  localStorage.setItem(ARTIST_ORDER_STORAGE_KEY, JSON.stringify(cleaned));
+}
+
+function persistArtistOrderFromDom() {
+  const order = Array.from(artistGroups.querySelectorAll(".artist-group"))
+    .map((node) => node.dataset.artist || "")
+    .filter(Boolean);
+  if (order.length) {
+    saveArtistOrder(order);
+  }
+}
+
+function sortGroupsByStoredOrder(groups) {
+  const storedOrder = getStoredArtistOrder();
+  const orderMap = new Map(storedOrder.map((artist, index) => [artist, index]));
+
+  const sortedGroups = [...groups].sort((a, b) => {
+    const indexA = orderMap.has(a.artist) ? orderMap.get(a.artist) : Number.MAX_SAFE_INTEGER;
+    const indexB = orderMap.has(b.artist) ? orderMap.get(b.artist) : Number.MAX_SAFE_INTEGER;
+    if (indexA !== indexB) {
+      return indexA - indexB;
+    }
+    return String(a.artist).localeCompare(String(b.artist), undefined, { sensitivity: "base" });
+  });
+
+  const normalizedOrder = storedOrder.filter((artist) => sortedGroups.some((group) => group.artist === artist));
+  for (const group of sortedGroups) {
+    if (!normalizedOrder.includes(group.artist)) {
+      normalizedOrder.push(group.artist);
+    }
+  }
+  saveArtistOrder(normalizedOrder);
+
+  return sortedGroups;
+}
+
+
+function updateFavoritesOnlyButton() {
+  if (!favoritesOnlyButton) {
+    return;
+  }
+  favoritesOnlyButton.setAttribute("aria-pressed", showFavoritesOnly ? "true" : "false");
+  favoritesOnlyButton.classList.toggle("active", showFavoritesOnly);
+  favoritesOnlyButton.textContent = showFavoritesOnly ? "Show All" : "Show Favorites";
+}
 function setLoading(isLoading) {
   startButton.disabled = isLoading;
   spinner.classList.toggle("show", isLoading);
@@ -96,15 +160,27 @@ function buildTrashIcon() {
   `;
 }
 
-function createTrashButton(className, ariaLabel, onClick) {
+function buildStarIcon() {
+  return `
+    <svg class="star-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2.5 14.95 8.48 21.55 9.44 16.77 14.1 17.9 20.68 12 17.58 6.1 20.68 7.23 14.1 2.45 9.44 9.05 8.48Z"></path>
+    </svg>
+  `;
+}
+
+function createIconButton(className, ariaLabel, iconMarkup, onClick) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `danger-btn icon-btn ${className}`;
+  button.className = `icon-btn ${className}`;
   button.setAttribute("aria-label", ariaLabel);
   button.title = ariaLabel;
-  button.innerHTML = buildTrashIcon();
+  button.innerHTML = iconMarkup;
   button.addEventListener("click", onClick);
   return button;
+}
+
+function createTrashButton(className, ariaLabel, onClick) {
+  return createIconButton(`danger-btn ${className}`, ariaLabel, buildTrashIcon(), onClick);
 }
 
 async function postJson(url, payload) {
@@ -161,6 +237,13 @@ function closeLightbox() {
   lightboxNext.disabled = true;
 }
 
+function buildLightboxCaption(image) {
+  const tags = Array.isArray(image.tags) ? image.tags : [];
+  const favoritePrefix = image.is_favorite ? "\u2605 " : "";
+  const tagText = tags.length ? ` | tags: ${tags.join(", ")}` : "";
+  return `${favoritePrefix}${image.title || image.relative_path}${tagText}`;
+}
+
 async function deleteImage(relativePath) {
   const confirmed = window.confirm(`Delete image?\n${relativePath}`);
   if (!confirmed) {
@@ -211,10 +294,63 @@ async function deleteArtist(artist) {
   }
 }
 
-function buildLightboxCaption(image) {
-  const tags = Array.isArray(image.tags) ? image.tags : [];
-  const tagText = tags.length ? ` | tags: ${tags.join(", ")}` : "";
-  return `${image.title || image.relative_path}${tagText}`;
+async function toggleFavorite(relativePath, isFavorite) {
+  setLoading(true);
+  setStatus(isFavorite ? "Marking favorite..." : "Removing favorite...", "");
+  try {
+    const { response, data } = await postJson("/api/favorite/image", {
+      relative_path: relativePath,
+      is_favorite: isFavorite,
+    });
+    if (!response.ok || !data.ok) {
+      setStatus(data.message || "Failed to update favorite.", "error");
+      return;
+    }
+
+    setStatus(isFavorite ? "Marked as favorite." : "Removed from favorites.", "success");
+    await loadGallery(currentSearchQuery);
+  } catch (error) {
+    setStatus(error.message || "Failed to update favorite.", "error");
+  } finally {
+    setLoading(false);
+  }
+}
+
+function attachArtistDragHandlers(details) {
+  details.addEventListener("dragstart", (event) => {
+    draggedArtistGroup = details;
+    details.classList.add("dragging");
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", details.dataset.artist || "");
+    }
+  });
+
+  details.addEventListener("dragend", () => {
+    details.classList.remove("dragging");
+    draggedArtistGroup = null;
+    persistArtistOrderFromDom();
+  });
+
+  details.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    if (!draggedArtistGroup || draggedArtistGroup === details) {
+      return;
+    }
+
+    const rect = details.getBoundingClientRect();
+    const placeBefore = event.clientY < rect.top + rect.height / 2;
+    if (placeBefore) {
+      artistGroups.insertBefore(draggedArtistGroup, details);
+    } else {
+      artistGroups.insertBefore(draggedArtistGroup, details.nextSibling);
+    }
+  });
+
+  details.addEventListener("drop", (event) => {
+    event.preventDefault();
+    persistArtistOrderFromDom();
+  });
 }
 
 function renderGallery(groups, totalCount) {
@@ -232,15 +368,30 @@ function renderGallery(groups, totalCount) {
 
   emptyText.style.display = "none";
 
-  groups.forEach((group) => {
+  const sortedGroups = sortGroupsByStoredOrder(groups);
+
+  sortedGroups.forEach((group) => {
     const details = document.createElement("details");
     details.className = "artist-group";
     details.open = true;
+    details.draggable = true;
+    details.dataset.artist = group.artist;
 
     const summary = document.createElement("summary");
 
+    const summaryTitleWrap = document.createElement("div");
+    summaryTitleWrap.className = "artist-summary-title";
+
+    const dragHandle = document.createElement("span");
+    dragHandle.className = "drag-handle";
+    dragHandle.textContent = "::";
+    dragHandle.title = "Drag to reorder artist groups";
+
     const summaryTitle = document.createElement("span");
     summaryTitle.textContent = group.artist;
+
+    summaryTitleWrap.appendChild(dragHandle);
+    summaryTitleWrap.appendChild(summaryTitle);
 
     const summaryActions = document.createElement("div");
     summaryActions.className = "artist-summary-actions";
@@ -262,7 +413,7 @@ function renderGallery(groups, totalCount) {
     summaryActions.appendChild(countBadge);
     summaryActions.appendChild(deleteArtistButton);
 
-    summary.appendChild(summaryTitle);
+    summary.appendChild(summaryTitleWrap);
     summary.appendChild(summaryActions);
 
     const grid = document.createElement("div");
@@ -303,6 +454,27 @@ function renderGallery(groups, totalCount) {
         metaText.appendChild(tagsMeta);
       }
 
+      const actions = document.createElement("div");
+      actions.className = "card-actions";
+
+      const favoriteAria = image.is_favorite
+        ? `Remove favorite for ${image.relative_path}`
+        : `Mark favorite for ${image.relative_path}`;
+
+      const favoriteButton = createIconButton(
+        "favorite-btn",
+        favoriteAria,
+        buildStarIcon(),
+        async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await toggleFavorite(image.relative_path, !Boolean(image.is_favorite));
+        }
+      );
+      if (image.is_favorite) {
+        favoriteButton.classList.add("is-favorite");
+      }
+
       const deleteImageButton = createTrashButton(
         "delete-image-btn",
         `Delete ${image.relative_path}`,
@@ -313,8 +485,11 @@ function renderGallery(groups, totalCount) {
         }
       );
 
+      actions.appendChild(favoriteButton);
+      actions.appendChild(deleteImageButton);
+
       metaRow.appendChild(metaText);
-      metaRow.appendChild(deleteImageButton);
+      metaRow.appendChild(actions);
 
       const itemIndex = lightboxItems.length;
       lightboxItems.push({
@@ -333,6 +508,7 @@ function renderGallery(groups, totalCount) {
 
     details.appendChild(summary);
     details.appendChild(grid);
+    attachArtistDragHandlers(details);
     artistGroups.appendChild(details);
   });
 }
@@ -358,9 +534,20 @@ async function loadDefaults() {
   pageSizeInput.value = toInt(data.page_size, 24, 1, 24);
 }
 
-async function loadGallery(searchQuery = currentSearchQuery) {
+async function loadGallery(searchQuery = currentSearchQuery, favoritesOnly = showFavoritesOnly) {
   currentSearchQuery = (searchQuery || "").trim();
-  const queryString = currentSearchQuery ? `?q=${encodeURIComponent(currentSearchQuery)}` : "";
+  showFavoritesOnly = Boolean(favoritesOnly);
+  updateFavoritesOnlyButton();
+
+  const params = new URLSearchParams();
+  if (currentSearchQuery) {
+    params.set("q", currentSearchQuery);
+  }
+  if (showFavoritesOnly) {
+    params.set("favorites_only", "1");
+  }
+  const queryString = params.toString() ? `?${params.toString()}` : "";
+
   const response = await fetch(`/api/gallery${queryString}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error("Failed to load gallery.");
@@ -443,6 +630,18 @@ if (searchInput) {
   });
 }
 
+
+if (favoritesOnlyButton) {
+  favoritesOnlyButton.addEventListener("click", async () => {
+    showFavoritesOnly = !showFavoritesOnly;
+    updateFavoritesOnlyButton();
+    try {
+      await loadGallery(currentSearchQuery, showFavoritesOnly);
+    } catch (error) {
+      setStatus(error.message || "Failed to load gallery.", "error");
+    }
+  });
+}
 themeToggle.addEventListener("click", toggleTheme);
 
 lightboxClose.addEventListener("click", closeLightbox);
@@ -471,6 +670,7 @@ document.addEventListener("keydown", (event) => {
 
 async function initializePage() {
   initializeTheme();
+  updateFavoritesOnlyButton();
 
   try {
     await loadDefaults();
@@ -486,3 +686,11 @@ async function initializePage() {
 }
 
 initializePage();
+
+
+
+
+
+
+
+

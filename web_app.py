@@ -43,7 +43,7 @@ def resolve_db_path() -> Path:
 DB_FILE = resolve_db_path()
 DATABASE = WatcherDatabase(DB_FILE)
 
-app = Flask(__name__, static_folder=str(BASE_DIR), static_url_path="")
+app = Flask(__name__, static_folder=str(BASE_DIR / "web"), static_url_path="/web")
 run_lock = threading.Lock()
 
 
@@ -142,10 +142,10 @@ def build_runtime_config(
     )
 
 
-def scan_images(search_query: str = "") -> Dict[str, Any]:
+def scan_images(search_query: str = "", favorites_only: bool = False) -> Dict[str, Any]:
     DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
     DATABASE.sync_images_from_filesystem(DOWNLOADS_DIR, IMAGE_EXTENSIONS)
-    return DATABASE.get_gallery_data(search_query=search_query)
+    return DATABASE.get_gallery_data(search_query=search_query, favorites_only=favorites_only)
 
 
 def run_download_job(
@@ -228,7 +228,14 @@ def api_defaults() -> Any:
 @app.get("/api/gallery")
 def api_gallery() -> Any:
     query = str(request.args.get("q", "")).strip()
-    return jsonify(scan_images(query))
+    favorites_raw = str(request.args.get("favorites_only", "")).strip()
+    favorites_only = False
+    if favorites_raw:
+        try:
+            favorites_only = parse_bool(favorites_raw)
+        except ValueError:
+            favorites_only = favorites_raw in {"1", "true", "yes", "on"}
+    return jsonify(scan_images(query, favorites_only=favorites_only))
 
 
 @app.post("/api/run")
@@ -362,6 +369,27 @@ def api_delete_artist() -> Any:
         run_lock.release()
 
 
+
+@app.route("/api/favorite/image", methods=["POST", "PUT", "PATCH"], strict_slashes=False)
+def api_favorite_image() -> Any:
+    payload = request.get_json(silent=True) or {}
+    relative_path = str(payload.get("relative_path", "")).strip()
+    if not relative_path:
+        return jsonify({"ok": False, "message": "relative_path is required."}), 400
+
+    is_favorite = payload_bool(payload, "is_favorite", False)
+
+    if not run_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "message": "A download job is already running."}), 409
+
+    try:
+        result = DATABASE.set_image_favorite(relative_path, is_favorite)
+        if not result.get("updated"):
+            return jsonify({"ok": False, "message": result.get("message", "Image not found."), "result": result}), 404
+
+        return jsonify({"ok": True, "result": result})
+    finally:
+        run_lock.release()
 @app.get("/downloads/<path:filename>")
 def serve_download(filename: str) -> Any:
     return send_from_directory(DOWNLOADS_DIR, filename)
@@ -376,3 +404,10 @@ bootstrap_database()
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
