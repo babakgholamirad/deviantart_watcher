@@ -1,5 +1,6 @@
 const THEME_STORAGE_KEY = "da_watcher_theme";
 const ARTIST_ORDER_STORAGE_KEY = "da_watcher_artist_order";
+const ARTIST_GROUP_STATE_STORAGE_KEY = "da_watcher_artist_group_state";
 
 const form = document.getElementById("downloadForm");
 const startButton = document.getElementById("startButton");
@@ -90,6 +91,40 @@ function getStoredArtistOrder() {
   } catch (_error) {
     return [];
   }
+}
+
+function getStoredArtistGroupState() {
+  try {
+    const raw = localStorage.getItem(ARTIST_GROUP_STATE_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_error) {
+    return {};
+  }
+}
+
+function saveArtistGroupState(state) {
+  localStorage.setItem(ARTIST_GROUP_STATE_STORAGE_KEY, JSON.stringify(state));
+}
+
+function setArtistGroupOpenState(artist, isOpen) {
+  if (!artist) {
+    return;
+  }
+  const state = getStoredArtistGroupState();
+  state[artist] = Boolean(isOpen);
+  saveArtistGroupState(state);
+}
+
+function getArtistGroupOpenState(artist) {
+  const state = getStoredArtistGroupState();
+  if (Object.prototype.hasOwnProperty.call(state, artist)) {
+    return Boolean(state[artist]);
+  }
+  return true;
 }
 
 function saveArtistOrder(order) {
@@ -373,9 +408,12 @@ function renderGallery(groups, totalCount) {
   sortedGroups.forEach((group) => {
     const details = document.createElement("details");
     details.className = "artist-group";
-    details.open = true;
+    details.open = getArtistGroupOpenState(group.artist);
     details.draggable = true;
     details.dataset.artist = group.artist;
+    details.addEventListener("toggle", () => {
+      setArtistGroupOpenState(group.artist, details.open);
+    });
 
     const summary = document.createElement("summary");
 
@@ -686,6 +724,11 @@ async function initializePage() {
 }
 
 initializePage();
+
+
+
+
+
 
 
 
